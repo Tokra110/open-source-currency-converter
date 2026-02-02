@@ -22,7 +22,9 @@
   },
   "content_scripts": [
     {
-      "matches": ["<all_urls>"],
+      "matches": [
+        "<all_urls>"
+      ],
       "js": [
         "src/shared/constants.js",
         "src/content/currency-detector.js",
@@ -31,6 +33,10 @@
       "run_at": "document_idle"
     }
   ],
+  "options_ui": {
+    "page": "src/options/options.html",
+    "open_in_tab": true
+  },
   "action": {
     "default_icon": {
       "16": "icons/icon16.png",

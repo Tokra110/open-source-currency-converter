@@ -117,7 +117,12 @@ var CURRENCY_NAMES = {
   ZAR: 'South African rand',
 };
 
+
 var ECB_CURRENCIES = Object.keys(CURRENCY_NAMES);
+
+// Currencies that typically don't use decimal places (or have very low unit value)
+var ZERO_DECIMAL_CURRENCIES = ['HUF', 'JPY', 'KRW', 'IDR', 'ISK'];
+
 
 var ECB_API_URL = 'https://www.ecb.europa.eu/stats/eurofxref/eurofxref-daily.xml';
 

@@ -108,9 +108,8 @@
     }
   }
 
+
   // --- Tooltip Logic ---
-
-
 
   chrome.runtime.onMessage.addListener((message) => {
     if (message.type === 'show-conversion') {
@@ -119,8 +118,10 @@
   });
 
   function showTooltip(data) {
+    // If tooltip exists, update it instead of removing
     if (currentTooltip) {
-      currentTooltip.remove();
+      updateTooltip(data);
+      return;
     }
 
     const selection = window.getSelection();
@@ -132,35 +133,23 @@
     const tooltip = document.createElement('div');
     tooltip.id = 'currency-converter-tooltip';
 
-    const formattedAmount = data.convertedAmount.toLocaleString(undefined, {
-      minimumFractionDigits: 2,
-      maximumFractionDigits: 2
-    });
-
+    const formattedAmount = formatCurrency(data.convertedAmount, data.targetCurrency);
     const displayText = `${formattedAmount} ${data.targetCurrency}`;
 
     let headerHtml = `<span class="cc-label">Converted:</span>`;
 
-    // If we have multiple possible currencies, show a dropdown
+    // If we have multiple possible currencies, show a toggle list
     if (data.possibleCurrencies && data.possibleCurrencies.length > 1) {
-      const options = data.possibleCurrencies.map(currency =>
-        `<option value="${currency}" ${currency === data.originalCurrency ? 'selected' : ''}>${currency}</option>`
-      ).join('');
-
-      headerHtml = `
-        <div class="cc-header-row">
-          <span class="cc-label">From</span>
-          <select id="cc-currency-select" class="cc-select" title="Change source currency">
-            ${options}
-          </select>
-        </div>
-      `;
+      headerHtml = buildHeaderHtml(data);
+      tooltip.classList.add('cc-has-multiple');
     }
 
     tooltip.innerHTML = `
       <div class="cc-tooltip-content">
         ${headerHtml}
-        <span class="cc-value">${displayText}</span>
+        <div class="cc-value-container">
+          <span class="cc-value">${displayText}</span>
+        </div>
         <span class="cc-hint">Click to copy</span>
       </div>
     `;
@@ -171,16 +160,222 @@
     document.body.appendChild(tooltip);
     currentTooltip = tooltip;
 
-    // Handle dropdown change
-    const select = tooltip.querySelector('#cc-currency-select');
-    if (select) {
-      // Prevent click propagation so the tooltip doesn't close or copy
-      select.addEventListener('click', (e) => e.stopPropagation());
-      select.addEventListener('mousedown', (e) => e.stopPropagation());
+    // Attach event listeners for pills & copy
+    attachTooltipListeners(tooltip, data);
 
-      select.addEventListener('change', (e) => {
-        const newCurrency = e.target.value;
-        const currentData = { ...data }; // Clone data
+    // Position tooltip
+    const scrollX = window.scrollX;
+    const scrollY = window.scrollY;
+
+    tooltip.style.left = `${rect.left + scrollX + rect.width / 2}px`;
+    tooltip.style.top = `${rect.top + scrollY - 10}px`;
+
+    // Global close handler
+    const closeHandler = (e) => {
+      if (tooltip.parentNode && !tooltip.contains(e.target)) {
+        tooltip.remove();
+        if (currentTooltip === tooltip) currentTooltip = null;
+        document.removeEventListener('mousedown', closeHandler);
+      }
+    };
+    setTimeout(() => document.addEventListener('mousedown', closeHandler), 10);
+  }
+
+  function updateTooltip(data) {
+    if (!currentTooltip) return;
+
+    // Update pills active state
+    if (data.possibleCurrencies && data.possibleCurrencies.length > 1) {
+      if (!currentTooltip.classList.contains('cc-has-multiple')) {
+        currentTooltip.classList.add('cc-has-multiple');
+      }
+
+      const pills = currentTooltip.querySelectorAll('.cc-currency-pill');
+      pills.forEach(pill => {
+        if (pill.dataset.currency === data.originalCurrency) {
+          pill.classList.add('active');
+        } else {
+          pill.classList.remove('active');
+        }
+      });
+
+      // Update data references for listeners
+      attachTooltipListeners(currentTooltip, data);
+      // Note: Re-attaching listeners might duplicate if not careful, 
+      // but here we are mainly needing to update the closure 'data' for the copy action?
+      // Actually, 'data' in 'attachTooltipListeners' is used for Recalculation (which sends current values).
+      // We should probably just update the cached 'data' implementation or re-render pills if needed.
+      // Simpler approach for now: The pills have the currency in dataset.
+
+      // We need to update the data object stored/used by the click handlers if we want them to be "fresh".
+      // However, the pill click handler builds the request based on `pill.dataset.currency` and `currentData` closure.
+      // To fix closure staleness, we can't easily "update" the closure of existing listeners.
+      // It's safer to re-render the pills area or implement a more robust state management.
+      // Given the simplicity, let's just re-render the header if it exists.
+
+      const headerRow = currentTooltip.querySelector('.cc-header-row');
+      if (headerRow) {
+        // Re-render header to ensure listeners have fresh 'data' closure if strictly needed,
+        // BUT wait, formatting 'from' currency might be enough? 
+        // Actually, let's keep it simple: just update styling.
+        // For the NEXT click, the pill listeners need to know what the CURRENT target/amount logic is.
+        // But wait, the pill listeners use `data` from the closure of the *creation* time.
+        // If we don't re-attach listeners, they will use old `data`.
+        // So we SHOULD re-render the header to be safe and simple.
+        const headerContainer = currentTooltip.querySelector('.cc-header-wrapper'); // We'll add a wrapper
+        if (headerContainer) {
+          headerContainer.innerHTML = buildHeaderHtml(data);
+          attachPillListeners(currentTooltip, data);
+        } else {
+          // Fallback if structure is different (initial migration)
+          const oldHeader = currentTooltip.querySelector('.cc-header-row');
+          if (oldHeader) {
+            oldHeader.outerHTML = `<div class="cc-header-wrapper">${buildHeaderHtml(data)}</div>`;
+            attachPillListeners(currentTooltip, data);
+          }
+        }
+      }
+    } else {
+      currentTooltip.classList.remove('cc-has-multiple');
+    }
+
+    // Animate Value
+    // Animate Value
+    const formattedAmount = formatCurrency(data.convertedAmount, data.targetCurrency);
+    const newText = `${formattedAmount} ${data.targetCurrency}`;
+
+    const valueContainer = currentTooltip.querySelector('.cc-value-container');
+    const oldValueEl = valueContainer.querySelector('.cc-value');
+
+    // If text is same, do nothing
+    if (oldValueEl.textContent === newText) return;
+
+    // Create new element
+    const newValueEl = document.createElement('span');
+    newValueEl.className = 'cc-value cc-value-entering';
+    newValueEl.textContent = newText;
+
+    valueContainer.appendChild(newValueEl);
+
+    // Trigger animation
+    // Force reflow
+    void newValueEl.offsetWidth;
+
+    oldValueEl.classList.add('cc-value-exit');
+    newValueEl.classList.remove('cc-value-entering');
+    newValueEl.classList.add('cc-value-active');
+
+    setTimeout(() => {
+      if (oldValueEl.parentNode) oldValueEl.remove();
+    }, 300); // match css transition
+
+    // Update copy listener data? 
+    // The copy listener uses `formattedAmount` from closure.
+    // We need to update the copy handler or the text it reads.
+    // The current copy handler reads `formattedAmount` variable. 
+    // We should change copy handler to read from DOM or update a state.
+    // Let's re-attach the main click listener or make it dynamic.
+    // Actually, simply updating the DOM text is enough if we read from textContent?
+    // Original code: navigator.clipboard.writeText(formattedAmount)
+    // We should switch to reading the current valid value.
+    currentTooltip._currentFormattedAmount = formattedAmount; // Stash it on the element
+  }
+
+  function formatCurrency(amount, currencyCode) {
+    if (typeof amount === 'string') return amount;
+
+    let digits = 2;
+    if (currencyCode && ZERO_DECIMAL_CURRENCIES && ZERO_DECIMAL_CURRENCIES.includes(currencyCode)) {
+      digits = 0;
+    }
+
+    return amount.toLocaleString(undefined, {
+      minimumFractionDigits: digits,
+      maximumFractionDigits: digits
+    });
+  }
+
+  function buildHeaderHtml(data) {
+    const pills = data.possibleCurrencies.map(currency => {
+      const isActive = currency === data.originalCurrency;
+      return `<span class="cc-currency-pill ${isActive ? 'active' : ''}" data-currency="${currency}">${currency}</span>`;
+    }).join('');
+
+    return `
+        <div class="cc-header-wrapper">
+            <div class="cc-header-row">
+            <span class="cc-label">From</span>
+            <div class="cc-currency-list">
+                ${pills}
+            </div>
+            </div>
+        </div>
+      `;
+  }
+
+  function attachTooltipListeners(tooltip, data) {
+    attachPillListeners(tooltip, data);
+
+    // Click to copy
+    // We remove old listener if any to avoid duplicates? 
+    // Actually `showTooltip` creates fresh element. `updateTooltip` relies on this helper?
+    // Let's handle the copy listener separately to avoid re-binding issues.
+    if (!tooltip._copyListenerAttached) {
+      let isCopying = false;
+      tooltip.addEventListener('click', (e) => {
+        // If clicking a pill, don't copy
+        if (e.target.closest('.cc-currency-pill')) return;
+
+        if (isCopying) return;
+        isCopying = true;
+
+        // Prefer stashed value (from update) or initial closure value
+        const textToCopy = tooltip._currentFormattedAmount || formatCurrency(data.convertedAmount, data.targetCurrency);
+
+        navigator.clipboard.writeText(textToCopy).then(() => {
+          const hint = tooltip.querySelector('.cc-hint');
+          if (hint) {
+            hint.textContent = 'Copied to clipboard!';
+            hint.classList.add('cc-copied');
+            tooltip.style.pointerEvents = 'none';
+
+            setTimeout(() => {
+              tooltip.style.opacity = '0';
+              tooltip.style.transform = 'translate(-50%, -110%) scale(0.9)';
+              setTimeout(() => {
+                if (tooltip.parentNode) tooltip.remove();
+                if (currentTooltip === tooltip) currentTooltip = null;
+              }, 200);
+            }, 1500);
+          }
+        }).catch(() => {
+          isCopying = false;
+        });
+      });
+      tooltip._copyListenerAttached = true;
+      tooltip._currentFormattedAmount = formatCurrency(data.convertedAmount, data.targetCurrency);
+    } else {
+      // Just update the stash
+      tooltip._currentFormattedAmount = formatCurrency(data.convertedAmount, data.targetCurrency);
+    }
+  }
+
+  function attachPillListeners(tooltip, data) {
+    const pills = tooltip.querySelectorAll('.cc-currency-pill');
+    pills.forEach(pill => {
+      // Clone to remove old listeners if we are re-attaching?
+      // Or just ensure we don't double bind. 
+      // Since we re-render the header HTML in `updateTooltip`, these are NEW DOM nodes.
+      // So simple addEventListener is fine.
+
+      pill.addEventListener('click', (e) => {
+        e.stopPropagation(); // Prevent tooltip click (copy)
+
+        // Don't do anything if clicking the already active one
+        if (pill.classList.contains('active')) return;
+
+        const newCurrency = pill.dataset.currency;
+        const currentData = { ...data };
 
         // Notify background to recalculate
         chrome.runtime.sendMessage({
@@ -194,56 +389,17 @@
           }
         });
 
-        // Optimistic update (optional, but good for UX) or just show loading state?
-        // For now, let's just wait for the update message which is fast.
+        // Optimistic UI update
+        pills.forEach(p => p.classList.remove('active'));
+        pill.classList.add('active');
+
+        // Optional: Dim value while loading
         const valueEl = tooltip.querySelector('.cc-value');
         if (valueEl) valueEl.style.opacity = '0.5';
       });
-    }
 
-    // Position tooltip
-    const scrollX = window.scrollX;
-    const scrollY = window.scrollY;
-
-    tooltip.style.left = `${rect.left + scrollX + rect.width / 2}px`;
-    tooltip.style.top = `${rect.top + scrollY - 10}px`;
-
-    // Click to copy
-    let isCopying = false;
-    tooltip.addEventListener('click', () => {
-      if (isCopying) return;
-      isCopying = true;
-
-      navigator.clipboard.writeText(formattedAmount).then(() => {
-        const hint = tooltip.querySelector('.cc-hint');
-        if (hint) {
-          hint.textContent = 'Copied to clipboard!';
-          hint.classList.add('cc-copied');
-          tooltip.style.pointerEvents = 'none';
-
-          setTimeout(() => {
-            tooltip.style.opacity = '0';
-            tooltip.style.transform = 'translate(-50%, -110%) scale(0.9)';
-            setTimeout(() => {
-              if (tooltip.parentNode) tooltip.remove();
-              if (currentTooltip === tooltip) currentTooltip = null;
-            }, 200);
-          }, 1500);
-        }
-      }).catch(() => {
-        isCopying = false;
-      });
+      pill.addEventListener('mousedown', (e) => e.stopPropagation());
     });
-
-    // Close on click outside
-    const closeHandler = (e) => {
-      if (tooltip.parentNode && !tooltip.contains(e.target)) {
-        tooltip.remove();
-        if (currentTooltip === tooltip) currentTooltip = null;
-        document.removeEventListener('mousedown', closeHandler);
-      }
-    };
-    setTimeout(() => document.addEventListener('mousedown', closeHandler), 10);
   }
 
   function injectStyles() {
@@ -270,6 +426,11 @@
         backdrop-filter: blur(8px);
         animation: cc-bounce 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
       }
+      
+      #currency-converter-tooltip.cc-has-multiple {
+        padding: 12px 18px;
+        min-width: 180px;
+      }
 
       #currency-converter-tooltip:hover {
         background: rgba(40, 40, 40, 0.98);
@@ -290,12 +451,43 @@
         opacity: 0.7;
       }
 
+      .cc-value-container {
+        display: grid;
+        grid-template-areas: "content";
+        align-items: center;
+        justify-items: center;
+        position: relative;
+        height: 48px; /* Fixed height to contain absolute slides */
+        min-width: 60px;
+        overflow: hidden;
+      }
+
       .cc-value {
+        grid-area: content;
         font-weight: 600;
         font-size: 16px;
         background: linear-gradient(135deg, #fff 0%, #aaa 100%);
         -webkit-background-clip: text;
         -webkit-text-fill-color: transparent;
+        transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+        width: auto;
+        white-space: nowrap;
+        text-align: center;
+      }
+
+      .cc-value-entering {
+        transform: translateY(100%);
+        opacity: 0;
+      }
+
+      .cc-value-active {
+        transform: translateY(0);
+        opacity: 1;
+      }
+      
+      .cc-value-exit {
+        transform: translateY(-100%);
+        opacity: 0;
       }
 
       .cc-hint {
@@ -311,6 +503,10 @@
         font-weight: bold;
       }
 
+      .cc-header-wrapper {
+        min-height: 20px;
+      }
+
       .cc-header-row {
         display: flex;
         align-items: center;
@@ -318,34 +514,40 @@
         margin-bottom: 2px;
       }
 
-      .cc-select {
-        background: rgba(255, 255, 255, 0.1);
-        border: 1px solid rgba(255, 255, 255, 0.2);
-        color: white;
-        border-radius: 4px;
-        font-size: 11px;
-        padding: 1px 4px;
-        outline: none;
-        cursor: pointer;
-        font-family: inherit;
-        -webkit-appearance: none;
-        appearance: none;
-        text-align: center;
-        transition: background 0.2s;
-      }
-
-      .cc-select:hover {
-        background: rgba(255, 255, 255, 0.2);
-      }
-
-      .cc-select option {
-        background: #333;
-        color: white;
-      }
-
       @keyframes cc-bounce {
         0% { transform: translate(-50%, -80%) scale(0.8); opacity: 0; }
         100% { transform: translate(-50%, -100%) scale(1); opacity: 1; }
+      }
+      
+      .cc-currency-list {
+        display: flex;
+        gap: 4px;
+        background: rgba(255, 255, 255, 0.1);
+        padding: 2px;
+        border-radius: 6px;
+      }
+
+      .cc-currency-pill {
+        font-size: 10px;
+        padding: 2px 6px;
+        border-radius: 4px;
+        cursor: pointer;
+        opacity: 0.6;
+        transition: all 0.2s;
+        font-weight: 500;
+      }
+
+      .cc-currency-pill:hover {
+        opacity: 0.9;
+        background: rgba(255, 255, 255, 0.1);
+      }
+
+      .cc-currency-pill.active {
+        opacity: 1;
+        background: rgba(255, 255, 255, 0.25);
+        color: #fff;
+        font-weight: 700;
+        box-shadow: 0 1px 2px rgba(0,0,0,0.2);
       }
     `;
     document.head.appendChild(style);
