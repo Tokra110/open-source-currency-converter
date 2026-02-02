@@ -70,8 +70,8 @@
       }
     }
 
-    lastDetection = detection;
-    sendMessage({ type: 'currency-detected', detection });
+    lastDetection = { ...detection, selectionText: text };
+    sendMessage({ type: 'currency-detected', detection: lastDetection });
   }
 
   function onStorageChange(changes, area) {
@@ -132,7 +132,6 @@
     const tooltip = document.createElement('div');
     tooltip.id = 'currency-converter-tooltip';
 
-    // Format converted amount
     const formattedAmount = data.convertedAmount.toLocaleString(undefined, {
       minimumFractionDigits: 2,
       maximumFractionDigits: 2
@@ -140,9 +139,27 @@
 
     const displayText = `${formattedAmount} ${data.targetCurrency}`;
 
+    let headerHtml = `<span class="cc-label">Converted:</span>`;
+
+    // If we have multiple possible currencies, show a dropdown
+    if (data.possibleCurrencies && data.possibleCurrencies.length > 1) {
+      const options = data.possibleCurrencies.map(currency =>
+        `<option value="${currency}" ${currency === data.originalCurrency ? 'selected' : ''}>${currency}</option>`
+      ).join('');
+
+      headerHtml = `
+        <div class="cc-header-row">
+          <span class="cc-label">From</span>
+          <select id="cc-currency-select" class="cc-select" title="Change source currency">
+            ${options}
+          </select>
+        </div>
+      `;
+    }
+
     tooltip.innerHTML = `
       <div class="cc-tooltip-content">
-        <span class="cc-label">Converted:</span>
+        ${headerHtml}
         <span class="cc-value">${displayText}</span>
         <span class="cc-hint">Click to copy</span>
       </div>
@@ -154,6 +171,36 @@
     document.body.appendChild(tooltip);
     currentTooltip = tooltip;
 
+    // Handle dropdown change
+    const select = tooltip.querySelector('#cc-currency-select');
+    if (select) {
+      // Prevent click propagation so the tooltip doesn't close or copy
+      select.addEventListener('click', (e) => e.stopPropagation());
+      select.addEventListener('mousedown', (e) => e.stopPropagation());
+
+      select.addEventListener('change', (e) => {
+        const newCurrency = e.target.value;
+        const currentData = { ...data }; // Clone data
+
+        // Notify background to recalculate
+        chrome.runtime.sendMessage({
+          type: 'recalculate-conversion',
+          data: {
+            amount: currentData.originalAmount,
+            fromCurrency: newCurrency,
+            targetCurrency: currentData.targetCurrency,
+            originalSymbol: currentData.originalSymbol,
+            possibleCurrencies: currentData.possibleCurrencies
+          }
+        });
+
+        // Optimistic update (optional, but good for UX) or just show loading state?
+        // For now, let's just wait for the update message which is fast.
+        const valueEl = tooltip.querySelector('.cc-value');
+        if (valueEl) valueEl.style.opacity = '0.5';
+      });
+    }
+
     // Position tooltip
     const scrollX = window.scrollX;
     const scrollY = window.scrollY;
@@ -162,25 +209,37 @@
     tooltip.style.top = `${rect.top + scrollY - 10}px`;
 
     // Click to copy
+    let isCopying = false;
     tooltip.addEventListener('click', () => {
+      if (isCopying) return;
+      isCopying = true;
+
       navigator.clipboard.writeText(formattedAmount).then(() => {
         const hint = tooltip.querySelector('.cc-hint');
         if (hint) {
-          hint.textContent = 'Copied!';
+          hint.textContent = 'Copied to clipboard!';
           hint.classList.add('cc-copied');
+          tooltip.style.pointerEvents = 'none';
+
           setTimeout(() => {
-            if (tooltip.parentNode) tooltip.remove();
-            currentTooltip = null;
-          }, 1000);
+            tooltip.style.opacity = '0';
+            tooltip.style.transform = 'translate(-50%, -110%) scale(0.9)';
+            setTimeout(() => {
+              if (tooltip.parentNode) tooltip.remove();
+              if (currentTooltip === tooltip) currentTooltip = null;
+            }, 200);
+          }, 1500);
         }
+      }).catch(() => {
+        isCopying = false;
       });
     });
 
-    // Close on click outside or escape
+    // Close on click outside
     const closeHandler = (e) => {
-      if (!tooltip.contains(e.target)) {
+      if (tooltip.parentNode && !tooltip.contains(e.target)) {
         tooltip.remove();
-        currentTooltip = null;
+        if (currentTooltip === tooltip) currentTooltip = null;
         document.removeEventListener('mousedown', closeHandler);
       }
     };
@@ -250,6 +309,38 @@
         color: #4ade80;
         opacity: 1;
         font-weight: bold;
+      }
+
+      .cc-header-row {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        margin-bottom: 2px;
+      }
+
+      .cc-select {
+        background: rgba(255, 255, 255, 0.1);
+        border: 1px solid rgba(255, 255, 255, 0.2);
+        color: white;
+        border-radius: 4px;
+        font-size: 11px;
+        padding: 1px 4px;
+        outline: none;
+        cursor: pointer;
+        font-family: inherit;
+        -webkit-appearance: none;
+        appearance: none;
+        text-align: center;
+        transition: background 0.2s;
+      }
+
+      .cc-select:hover {
+        background: rgba(255, 255, 255, 0.2);
+      }
+
+      .cc-select option {
+        background: #333;
+        color: white;
       }
 
       @keyframes cc-bounce {

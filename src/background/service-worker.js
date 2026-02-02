@@ -140,7 +140,7 @@ function formatDisplayAmount(amount, symbol) {
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.type === 'currency-detected') {
-    handleCurrencyDetected(message);
+    handleCurrencyDetected(message, sender);
     return false;
   }
 
@@ -152,10 +152,42 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   return false;
 });
 
-async function handleCurrencyDetected(message) {
+async function handleCurrencyDetected(message, sender) {
   const settingsResult = await chrome.storage.sync.get(STORAGE_KEYS.SETTINGS);
   const config = settingsResult[STORAGE_KEYS.SETTINGS] || DEFAULT_SETTINGS;
+
+  // Update context menu as before
   await updateContextMenu(message.detection, config);
+
+  // Auto-display conversion if applicable (selection length <= 200)
+  if (message.detection && message.detection.selectionText.length <= 200) {
+    const { rates } = await getCachedRates();
+    if (!rates) return;
+
+    // Use the first currency in the ordered list
+    const ordered = reorderCurrencies(message.detection.currencies, config.defaultDollarCurrency);
+    const fromCurrency = ordered[0];
+
+    if (fromCurrency === config.targetCurrency) return;
+
+    try {
+      const convertedAmount = convertCurrency(message.detection.amount, fromCurrency, config.targetCurrency, rates);
+
+      chrome.tabs.sendMessage(sender.tab.id, {
+        type: 'show-conversion',
+        data: {
+          originalAmount: message.detection.amount,
+          originalCurrency: fromCurrency,
+          originalSymbol: message.detection.symbol,
+          possibleCurrencies: message.detection.currencies,
+          convertedAmount,
+          targetCurrency: config.targetCurrency,
+        }
+      });
+    } catch (err) {
+      console.error('Auto-conversion failed:', err.message);
+    }
+  }
 }
 
 async function handleNoCurrency() {
@@ -211,3 +243,37 @@ chrome.storage.onChanged.addListener(async (changes, area) => {
     }
   }
 });
+
+// --- Recalculation handler ---
+
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message.type === 'recalculate-conversion') {
+    handleRecalculation(message, sender);
+    return false;
+  }
+});
+
+async function handleRecalculation(message, sender) {
+  const { amount, fromCurrency, targetCurrency, originalSymbol, possibleCurrencies } = message.data;
+  const { rates } = await getCachedRates();
+
+  if (!rates) return;
+
+  try {
+    const convertedAmount = convertCurrency(amount, fromCurrency, targetCurrency, rates);
+
+    chrome.tabs.sendMessage(sender.tab.id, {
+      type: 'show-conversion',
+      data: {
+        originalAmount: amount,
+        originalCurrency: fromCurrency,
+        originalSymbol: originalSymbol,
+        possibleCurrencies: possibleCurrencies,
+        convertedAmount,
+        targetCurrency: targetCurrency,
+      }
+    });
+  } catch (err) {
+    console.error('Recalculation failed:', err.message);
+  }
+}

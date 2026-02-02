@@ -32,6 +32,56 @@ var CURRENCY_SYMBOLS = {
   'Mex$': ['MXN'],
 };
 
+var CURRENCY_KEYWORDS = {
+  // MAJOR CURRENCIES
+  'USD': ['dollar', 'dollars', 'buck', 'bucks', 'greenback', 'greenbacks', 'us dollar', 'us dollars', 'usd'],
+  'EUR': ['euro', 'euros', 'eur'],
+  'JPY': ['yen', 'yens', 'jpy'],
+  'GBP': ['pound', 'pounds', 'quid', 'sterling', 'pound sterling', 'gbp'],
+  'CHF': ['franc', 'francs', 'swiss franc', 'swiss francs', 'sfr', 'chf'],
+  'CNY': ['yuan', 'yuans', 'renminbi', 'rmb', 'kuai', 'cny'],
+  'INR': ['rupee', 'rupees', 'inr'],
+
+  // DOLLAR VARIANTS
+  'AUD': ['australian dollar', 'australian dollars', 'aussie dollar', 'aussie dollars', 'aud'],
+  'CAD': ['canadian dollar', 'canadian dollars', 'loonie', 'loonies', 'toonie', 'toonies', 'cad'],
+  'NZD': ['new zealand dollar', 'new zealand dollars', 'kiwi', 'kiwis', 'nzd'],
+  'SGD': ['singapore dollar', 'singapore dollars', 'sgd'],
+  'HKD': ['hong kong dollar', 'hong kong dollars', 'hkd'],
+
+  // EUROPEAN / NORDIC
+  'SEK': ['swedish krona', 'sek'], // 'krona' handled by generic lookup if needed, but specific here for full names
+  'NOK': ['norwegian krone', 'nok'],
+  'DKK': ['danish krone', 'dkk'],
+  'ISK': ['icelandic krona', 'icelandic kronur', 'isk'],
+  'CZK': ['koruna', 'korunas', 'czech koruna', 'czk'],
+  'HUF': ['forint', 'forints', 'huf'],
+  'PLN': ['zloty', 'zlotys', 'pln'],
+  'RON': ['leu', 'lei', 'romanian leu', 'ron'],
+  'BGN': ['lev', 'leva', 'bulgarian lev', 'bgn'],
+  'HRK': ['kuna', 'kunas', 'croatian kuna', 'hrk'],
+
+  // OTHERS
+  'TRY': ['lira', 'liras', 'turkish lira', 'try'],
+  'BRL': ['real', 'reais', 'brazilian real', 'brl'],
+  'MXN': ['mexican peso', 'mexican pesos', 'mxn'],
+  'PHP': ['philippine peso', 'philippine pesos', 'php'],
+  'IDR': ['rupiah', 'rupiahs', 'indonesian rupiah', 'idr'],
+  'ILS': ['shekel', 'shekels', 'israeli shekel', 'ils'],
+  'KRW': ['won', 'wons', 'south korean won', 'krw'],
+  'MYR': ['ringgit', 'ringgits', 'malaysian ringgit', 'myr'],
+  'THB': ['baht', 'bahts', 'thai baht', 'thb'],
+  'ZAR': ['rand', 'rands', 'south african rand', 'zar'],
+
+  // GENERIC / AMBIGUOUS TERMS (mapped to most likely or multiple)
+  // These will return multiple codes if not handled specifically by exact match above
+  'GENERIC_DOLLAR': ['USD', 'AUD', 'CAD', 'NZD', 'SGD', 'HKD'],
+  'GENERIC_PESO': ['MXN', 'PHP'],
+  'GENERIC_KRONA': ['SEK', 'ISK'],
+  'GENERIC_KRONE': ['NOK', 'DKK'],
+  'GENERIC_CROWN': ['CZK', 'SEK', 'NOK', 'DKK', 'ISK'],
+};
+
 var CURRENCY_NAMES = {
   EUR: 'Euro',
   USD: 'US dollar',
