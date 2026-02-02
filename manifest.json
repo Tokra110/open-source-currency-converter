@@ -22,11 +22,16 @@
   "content_scripts": [
     {
       "matches": [
-        "<all_urls>"
+        "http://*/*",
+        "https://*/*"
+      ],
+      "css": [
+        "src/content/tooltip.css"
       ],
       "js": [
         "src/shared/constants.js",
         "src/content/currency-detector.js",
+        "src/content/tooltip.js",
         "src/content/content.js"
       ],
       "run_at": "document_idle"
