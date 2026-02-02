@@ -6,7 +6,7 @@
 (() => {
   let debounceTimer = null;
   let lastDetection = null;
-  let extensionEnabled = true;
+
   let currentTooltip = null;
 
   // Load initial settings
@@ -19,7 +19,7 @@
   chrome.storage.onChanged.addListener(onStorageChange);
 
   function onSelectionChange() {
-    if (!extensionEnabled) return;
+
 
     // Clear existing tooltip on any selection change
     if (currentTooltip) {
@@ -42,10 +42,7 @@
     const text = selection?.toString().trim();
 
     if (!text || text.length === 0 || text.length > 200) {
-      if (lastDetection) {
-        lastDetection = null;
-        sendMessage({ type: 'no-currency' });
-      }
+      lastDetection = null;
       return;
     }
 
@@ -54,10 +51,7 @@
     const detection = CurrencyDetector.detectCurrency(text, settings.numberFormat);
 
     if (!detection) {
-      if (lastDetection) {
-        lastDetection = null;
-        sendMessage({ type: 'no-currency' });
-      }
+      lastDetection = null;
       return;
     }
 
@@ -74,22 +68,9 @@
     sendMessage({ type: 'currency-detected', detection: lastDetection });
   }
 
-  function onStorageChange(changes, area) {
-    if (area === 'sync' && changes[STORAGE_KEYS.SETTINGS]) {
-      const newSettings = changes[STORAGE_KEYS.SETTINGS].newValue || DEFAULT_SETTINGS;
-      extensionEnabled = newSettings.enabled;
 
-      if (!extensionEnabled && lastDetection) {
-        lastDetection = null;
-        sendMessage({ type: 'no-currency' });
-      }
-    }
-  }
 
-  async function initSettings() {
-    const settings = await getSettings();
-    extensionEnabled = settings.enabled;
-  }
+
 
   async function getSettings() {
     try {
