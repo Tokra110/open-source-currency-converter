@@ -72,14 +72,6 @@ var CURRENCY_KEYWORDS = {
   'MYR': ['ringgit', 'ringgits', 'malaysian ringgit', 'myr'],
   'THB': ['baht', 'bahts', 'thai baht', 'thb'],
   'ZAR': ['rand', 'rands', 'south african rand', 'zar'],
-
-  // GENERIC / AMBIGUOUS TERMS (mapped to most likely or multiple)
-  // These will return multiple codes if not handled specifically by exact match above
-  'GENERIC_DOLLAR': ['USD', 'AUD', 'CAD', 'NZD', 'SGD', 'HKD'],
-  'GENERIC_PESO': ['MXN', 'PHP'],
-  'GENERIC_KRONA': ['SEK', 'ISK'],
-  'GENERIC_KRONE': ['NOK', 'DKK'],
-  'GENERIC_CROWN': ['CZK', 'SEK', 'NOK', 'DKK', 'ISK'],
 };
 
 var CURRENCY_NAMES = {
@@ -123,6 +115,20 @@ var ECB_CURRENCIES = Object.keys(CURRENCY_NAMES);
 // Currencies that typically don't use decimal places (or have very low unit value)
 var ZERO_DECIMAL_CURRENCIES = ['HUF', 'JPY', 'KRW', 'IDR', 'ISK'];
 
+
+var TIMING = {
+  DEBOUNCE_MS: 300,
+  TOOLTIP_CLOSE_DELAY_MS: 50,
+  COPY_DISPLAY_MS: 1500,
+  FADE_OUT_MS: 200,
+  VALUE_TRANSITION_MS: 300,
+  STATUS_DISPLAY_MS: 1500,
+  STATUS_FADE_MS: 300,
+};
+
+var LIMITS = {
+  MAX_SELECTION_LENGTH: 200,
+};
 
 var ECB_API_URL = 'https://www.ecb.europa.eu/stats/eurofxref/eurofxref-daily.xml';
 

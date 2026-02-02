@@ -4,27 +4,65 @@
  * Uses globals from constants.js (loaded via importScripts).
  */
 
+const FETCH_TIMEOUT_MS = 10000;
+const STALE_THRESHOLD_MS = 48 * 60 * 60 * 1000; // 48 hours
+const MAX_RETRIES = 3;
+const BASE_RETRY_DELAY_MS = 2000;
+
 /**
  * Fetch latest rates from the ECB XML endpoint.
  * Parses the XML and returns a map of { currency: rateVsEUR }.
  * EUR itself is always 1.
  */
 async function fetchRates() {
-  const response = await fetch(ECB_API_URL);
-  if (!response.ok) {
-    throw new Error(`ECB API returned ${response.status}`);
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+
+  try {
+    const response = await fetch(ECB_API_URL, { signal: controller.signal });
+    clearTimeout(timeoutId);
+
+    if (!response.ok) {
+      throw new Error(`ECB API returned ${response.status}`);
+    }
+
+    const xmlText = await response.text();
+    const rates = parseEcbXml(xmlText);
+    rates.EUR = 1;
+
+    await chrome.storage.local.set({
+      [STORAGE_KEYS.RATES]: rates,
+      [STORAGE_KEYS.RATES_TIMESTAMP]: new Date().toISOString(),
+    });
+
+    return rates;
+  } catch (err) {
+    clearTimeout(timeoutId);
+    throw err;
   }
+}
 
-  const xmlText = await response.text();
-  const rates = parseEcbXml(xmlText);
-  rates.EUR = 1;
-
-  await chrome.storage.local.set({
-    [STORAGE_KEYS.RATES]: rates,
-    [STORAGE_KEYS.RATES_TIMESTAMP]: new Date().toISOString(),
-  });
-
-  return rates;
+/**
+ * Retry wrapper for fetchRates with exponential backoff.
+ * Skips retries for client errors (4xx) except 429 (rate limit).
+ */
+async function fetchRatesWithRetry() {
+  let lastError;
+  for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+    try {
+      return await fetchRates();
+    } catch (err) {
+      lastError = err;
+      if (err.message?.includes('returned 4') && !err.message.includes('429')) {
+        throw err;
+      }
+      if (attempt < MAX_RETRIES - 1) {
+        const delay = BASE_RETRY_DELAY_MS * Math.pow(2, attempt);
+        await new Promise(r => setTimeout(r, delay));
+      }
+    }
+  }
+  throw lastError;
 }
 
 /**
@@ -39,7 +77,7 @@ function parseEcbXml(xmlText) {
   while ((match = regex.exec(xmlText)) !== null) {
     const currency = match[1];
     const rate = parseFloat(match[2]);
-    if (!isNaN(rate)) {
+    if (Number.isFinite(rate) && rate > 0) {
       rates[currency] = rate;
     }
   }
@@ -63,6 +101,18 @@ async function getCachedRates() {
 }
 
 /**
+ * Check whether cached rates are too old to be reliable.
+ * @param {string|null} timestamp - ISO timestamp of last rate fetch
+ * @param {number} maxAgeMs - Maximum acceptable age in milliseconds
+ * @returns {boolean}
+ */
+function isRateStale(timestamp, maxAgeMs = STALE_THRESHOLD_MS) {
+  if (!timestamp) return true;
+  const age = Date.now() - new Date(timestamp).getTime();
+  return age > maxAgeMs;
+}
+
+/**
  * Convert an amount from one currency to another.
  * Cross-calculates through EUR using ECB rates.
  *
@@ -73,13 +123,16 @@ async function getCachedRates() {
  * @returns {number} Converted amount
  */
 function convertCurrency(amount, from, to, rates) {
+  if (!Number.isFinite(amount)) {
+    throw new Error(`Invalid amount: ${amount}`);
+  }
   if (from === to) return amount;
 
   const fromRate = rates[from];
   const toRate = rates[to];
 
   if (fromRate == null || toRate == null) {
-    throw new Error(`Missing rate for ${fromRate == null ? from : to}`);
+    throw new Error(`Missing rate for ${fromRate == null ? from : ''}${fromRate == null && toRate == null ? ' and ' : ''}${toRate == null ? to : ''}`);
   }
 
   // Convert to EUR first, then to target
