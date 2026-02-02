@@ -8,11 +8,11 @@ const targetCurrencySelect = document.getElementById('targetCurrency');
 const defaultDollarSelect = document.getElementById('defaultDollarCurrency');
 const numberFormatSelect = document.getElementById('numberFormat');
 const themeSelect = document.getElementById('theme');
-const enabledCheckbox = document.getElementById('enabled');
+
 const statusDiv = document.getElementById('status');
 
 // Listen for changes
-const inputs = [targetCurrencySelect, defaultDollarSelect, numberFormatSelect, themeSelect, enabledCheckbox];
+const inputs = [targetCurrencySelect, defaultDollarSelect, numberFormatSelect, themeSelect];
 inputs.forEach(input => {
     input.addEventListener('change', saveOptions);
 });
@@ -53,11 +53,7 @@ async function restoreOptions() {
     if (settings.theme) {
         themeSelect.value = settings.theme;
     }
-    if (typeof settings.enabled === 'boolean') {
-        enabledCheckbox.checked = settings.enabled;
-    } else {
-        enabledCheckbox.checked = true;
-    }
+
 }
 
 /**
@@ -69,7 +65,7 @@ async function saveOptions() {
         defaultDollarCurrency: defaultDollarSelect.value,
         numberFormat: numberFormatSelect.value,
         theme: themeSelect.value,
-        enabled: enabledCheckbox.checked
+        enabled: true
     };
 
     await chrome.storage.sync.set({ settings });

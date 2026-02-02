@@ -9,3 +9,5 @@ dist/
 *.zip
 .DS_Store
 Thumbs.db
+publication_guide.md
+.claude
