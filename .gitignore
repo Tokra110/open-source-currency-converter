@@ -1,0 +1,11 @@
+.env
+.env.*
+!.env.example
+node_modules/
+dist/
+.agent/
+*.pem
+*.crx
+*.zip
+.DS_Store
+Thumbs.db
