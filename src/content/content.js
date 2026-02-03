@@ -11,14 +11,6 @@
   // Load initial theme setting
   getSettings().then(s => { currentTheme = s.theme; });
 
-  // React to settings changes (e.g., user changes theme in options page)
-  chrome.storage.onChanged.addListener((changes, area) => {
-    if (area === 'sync' && changes[STORAGE_KEYS.SETTINGS]) {
-      const newSettings = changes[STORAGE_KEYS.SETTINGS].newValue || {};
-      if (newSettings.theme) currentTheme = newSettings.theme;
-    }
-  });
-
   // Listen for selection changes
   document.addEventListener('selectionchange', onSelectionChange);
 
@@ -59,6 +51,19 @@
     }
 
     const settings = await getSettings();
+
+    // Check Global Toggle + Interactive Mode
+    if (!settings.extensionEnabled || settings.conversionMode !== 'interactive') {
+      lastDetection = null;
+      return;
+    }
+
+    // Check Site-Specific Disable
+    if (isSiteDisabled(settings)) {
+      lastDetection = null;
+      return;
+    }
+
     const detection = CurrencyDetector.detectCurrency(text, settings.numberFormat);
 
     if (!detection) {
@@ -87,5 +92,66 @@
     } catch {
       // Extension context may be invalidated after update/reload
     }
+  }
+
+  // --- Page Scanner Integration ---
+
+  /**
+   * Initialize the page scanner.
+   * Requests rates from service worker and passes them to the scanner.
+   * Scanner itself checks if it should be enabled based on settings.
+   */
+  async function initPageScanner() {
+    const settings = await getSettings();
+    // We pass settings regardless; PageScanner determines if it runs.
+
+    try {
+      const response = await chrome.runtime.sendMessage({ type: 'get-rates' });
+      if (response && response.rates) {
+        PageScanner.init(settings, response.rates);
+      }
+    } catch (err) {
+      console.warn('[CurrencyConverter] Failed to init page scanner:', err);
+    }
+  }
+
+  // Initialize scanner on page load
+  initPageScanner();
+
+  // Re-initialize scanner when settings change
+  chrome.storage.onChanged.addListener(async (changes, area) => {
+    if (area === 'sync' && changes[STORAGE_KEYS.SETTINGS]) {
+      const newSettings = changes[STORAGE_KEYS.SETTINGS].newValue || {};
+
+      // Check if current site status changed
+      const oldDisabled = isSiteDisabled({ ...DEFAULT_SETTINGS, ...(changes[STORAGE_KEYS.SETTINGS].oldValue || {}) });
+      const newDisabled = isSiteDisabled(newSettings);
+
+      if (newDisabled !== oldDisabled) {
+        if (newDisabled) {
+          // Site just got disabled
+          CurrencyTooltip.remove();
+          // PageScanner doesn't have a public 'stop' method yet, but it checks settings internally
+        }
+      }
+
+      // Update theme for tooltip
+      if (newSettings.theme) currentTheme = newSettings.theme;
+
+      // Update page scanner
+      try {
+        const response = await chrome.runtime.sendMessage({ type: 'get-rates' });
+        if (response && response.rates) {
+          PageScanner.updateSettings(newSettings, response.rates);
+        }
+      } catch {
+        // Extension context may be invalidated
+      }
+    }
+  });
+
+  function isSiteDisabled(settings) {
+    if (!settings.disabledDomains) return false;
+    return settings.disabledDomains.includes(window.location.hostname);
   }
 })();

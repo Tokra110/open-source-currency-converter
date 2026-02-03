@@ -136,11 +136,17 @@ var ALARM_NAME = 'refreshRates';
 var ALARM_PERIOD_MINUTES = 1440; // 24 hours
 
 var DEFAULT_SETTINGS = {
-  targetCurrency: 'USD',
-  defaultDollarCurrency: 'USD',
-  numberFormat: 'auto', // 'auto' | 'us' | 'eu'
-  enabled: true,
-  theme: 'system', // 'light' | 'dark' | 'system'
+  targetCurrency: 'USD', // Default target currency
+  defaultDollarCurrency: 'USD', // Default for generic '$'
+  numberFormat: 'auto', // 'auto', 'us', 'eu'
+  lastRateUpdate: 0,
+  extensionEnabled: true, // Master toggle
+  conversionMode: 'auto', // 'auto' (wholescan) or 'interactive' (tooltip)
+  // Deprecated but kept for migration if needed, though we'll likely ignore it in new logic
+  autoReplaceEnabled: true,
+  autoReplaceLimit: 100, // Max replacements per page to prevent freezing
+  theme: 'system', // 'system', 'light', 'dark'
+  disabledDomains: [] // List of domains where extension is disabled
 };
 
 var STORAGE_KEYS = {

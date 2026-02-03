@@ -47,9 +47,20 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   } else if (message.type === 'manual-sync') {
     handleManualSync(sendResponse);
     return true; // async response
+  } else if (message.type === 'get-rates') {
+    handleGetRates(sendResponse);
+    return true; // async response
   }
   return true;
 });
+
+/**
+ * Handle get-rates request from content script for page scanner.
+ */
+async function handleGetRates(sendResponse) {
+  const rates = await resolveRates();
+  sendResponse({ rates });
+}
 
 // --- Manual Sync & Rate Limiting ---
 
