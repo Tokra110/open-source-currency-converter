@@ -26,22 +26,21 @@
         "https://*/*"
       ],
       "css": [
-        "src/content/tooltip.css"
+        "src/content/tooltip.css",
+        "src/content/page-scanner.css"
       ],
       "js": [
         "src/shared/constants.js",
         "src/content/currency-detector.js",
         "src/content/tooltip.js",
+        "src/content/page-scanner.js",
         "src/content/content.js"
       ],
       "run_at": "document_idle"
     }
   ],
-  "options_ui": {
-    "page": "src/options/options.html",
-    "open_in_tab": true
-  },
   "action": {
+    "default_popup": "src/popup/popup.html",
     "default_icon": {
       "16": "icons/icon16.png",
       "48": "icons/icon48.png"

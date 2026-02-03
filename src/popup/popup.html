@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Currency Converter</title>
+    <link rel="stylesheet" href="popup.css">
+</head>
+
+<body>
+    <div class="container">
+        <!-- Header & Global Toggle -->
+        <header>
+            <div class="header-top">
+                <h1>Currency Converter</h1>
+                <div class="global-toggle-wrapper">
+                    <label class="switch">
+                        <input type="checkbox" id="extensionEnabled">
+                        <span class="slider round"></span>
+                    </label>
+                </div>
+            </div>
+
+            <div class="site-toggle-wrapper" id="siteToggleContainer" style="display: none;">
+                <div class="site-info">
+                    <div class="site-status-dot" id="siteStatusDot"></div>
+                    <span id="siteHostname">example.com</span>
+                </div>
+                <button id="siteToggleBtn" class="link-btn">Disable</button>
+            </div>
+
+            <p id="statusText">Extension is Active</p>
+        </header>
+
+        <main id="mainContent">
+            <!-- Mode Selection -->
+            <div class="section mode-section">
+                <h2>Operation Mode</h2>
+                <div class="mode-switch">
+                    <div class="mode-option">
+                        <input type="radio" id="modeAuto" name="conversionMode" value="auto">
+                        <label for="modeAuto" class="mode-label">
+                            <span class="mode-title">Full Page</span>
+                            <span class="mode-desc">Auto-replace all prices</span>
+                        </label>
+                    </div>
+                    <div class="mode-option">
+                        <input type="radio" id="modeInteractive" name="conversionMode" value="interactive">
+                        <label for="modeInteractive" class="mode-label">
+                            <span class="mode-title">Interactive</span>
+                            <span class="mode-desc">Tooltip on selection</span>
+                        </label>
+                    </div>
+                </div>
+            </div>
+
+            <hr>
+
+            <!-- General Settings -->
+            <div class="section settings-section">
+                <div class="form-group">
+                    <label for="targetCurrency">Convert to</label>
+                    <select id="targetCurrency"></select>
+                </div>
+
+                <div class="form-group">
+                    <label for="defaultDollarCurrency">Default '$'</label>
+                    <select id="defaultDollarCurrency">
+                        <option value="USD">USD - US Dollar</option>
+                        <option value="AUD">AUD - Australian Dollar</option>
+                        <option value="CAD">CAD - Canadian Dollar</option>
+                        <option value="NZD">NZD - New Zealand Dollar</option>
+                        <option value="SGD">SGD - Singapore Dollar</option>
+                        <option value="HKD">HKD - Hong Kong Dollar</option>
+                    </select>
+                </div>
+
+                <div class="form-group">
+                    <label for="numberFormat">Format</label>
+                    <select id="numberFormat">
+                        <option value="auto">Auto-detect</option>
+                        <option value="us">1,234.56</option>
+                        <option value="eu">1.234,56</option>
+                    </select>
+                </div>
+            </div>
+        </main>
+
+        <!-- Footer -->
+        <footer>
+            <div class="rate-status">
+                <span id="lastSynced">Synced: ...</span>
+                <button id="syncBtn" class="link-btn">Sync Now</button>
+            </div>
+            <div id="msgLog"></div>
+        </footer>
+    </div>
+
+    <script src="../shared/constants.js"></script>
+    <script src="popup.js"></script>
+</body>
+
+</html>
