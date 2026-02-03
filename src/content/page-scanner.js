@@ -190,6 +190,16 @@ var PageScanner = (() => {
 
         if (fromCurrency === settings.targetCurrency) return;
 
+        // Surgical Guard: If the detected match covers a small fraction of the element's text,
+        // it's likely a container row. We'll skip replacing the whole row and let the
+        // scanner find individual price elements inside it.
+        const originalLength = detection.original.length;
+        const totalLength = text.length;
+
+        // If the price is less than 50% of the total text and the text is reasonably long,
+        // it's probably too "noisy" to replace the whole container.
+        if (totalLength > 15 && originalLength < totalLength * 0.5) return;
+
         const convertedAmount = convertCurrencyLocal(detection.amount, fromCurrency, settings.targetCurrency);
         if (convertedAmount === null) return;
 
@@ -232,6 +242,9 @@ var PageScanner = (() => {
                 const ratio = originalWidth / newWidth;
 
                 // Clamp minimum font size to 8px for readability
+                const computedStyle = window.getComputedStyle(element);
+                const currentFontSize = parseFloat(computedStyle.fontSize) || 14;
+
                 let newFontSize = currentFontSize * ratio;
                 if (newFontSize < 8) newFontSize = 8;
 
@@ -416,6 +429,9 @@ var PageScanner = (() => {
                 const ratio = originalWidth / newWidth;
 
                 // Clamp minimum font size to 8px for readability
+                const computedStyle = window.getComputedStyle(span);
+                const currentFontSize = parseFloat(computedStyle.fontSize) || 14;
+
                 let newFontSize = currentFontSize * ratio;
                 if (newFontSize < 8) newFontSize = 8;
 
