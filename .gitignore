@@ -11,3 +11,4 @@ dist/
 Thumbs.db
 publication_guide.md
 .claude
+tests/
