@@ -42,7 +42,9 @@ document.addEventListener('DOMContentLoaded', async () => {
     defaultDollarCurrency.value = settings.defaultDollarCurrency;
     numberFormat.value = settings.numberFormat;
 
-    updateLastSyncedTime(settings.lastRateUpdate);
+    // Load last sync time from local storage (where rates are cached)
+    const ratesData = await chrome.storage.local.get(STORAGE_KEYS.RATES_TIMESTAMP);
+    updateLastSyncedTime(ratesData[STORAGE_KEYS.RATES_TIMESTAMP]);
 
     // Event Listeners
 
@@ -78,8 +80,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             if (response && response.status === 'success') {
                 updateLastSyncedTime(response.timestamp);
                 showMsg('Rates updated!');
-                // Also update local storage timestamp so we don't look stale on reopen
-                saveSetting('lastRateUpdate', response.timestamp);
+                // Note: Timestamp is stored in local storage by service worker, not in sync settings
             } else if (response && response.status === 'rate-limited') {
                 showMsg(`Try again in ${response.remainingSeconds}s`);
             } else {
@@ -94,15 +95,23 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
     });
 
-    // Helpers
-    async function saveSetting(key, value) {
-        // Fetch current settings again to avoid overwriting other changes (simple concurrency handling)
-        const current = await chrome.storage.sync.get(STORAGE_KEYS.SETTINGS);
-        const newSettings = { ...DEFAULT_SETTINGS, ...current[STORAGE_KEYS.SETTINGS] };
+    // Helpers - Debounced settings save to prevent race conditions
+    const pendingChanges = {};
+    let saveDebounceTimer = null;
 
-        newSettings[key] = value;
+    function saveSetting(key, value) {
+        pendingChanges[key] = value;
 
-        await chrome.storage.sync.set({ [STORAGE_KEYS.SETTINGS]: newSettings });
+        if (saveDebounceTimer) clearTimeout(saveDebounceTimer);
+        saveDebounceTimer = setTimeout(async () => {
+            const changesToSave = { ...pendingChanges };
+            // Clear pending before async operation
+            Object.keys(pendingChanges).forEach(k => delete pendingChanges[k]);
+
+            const current = await chrome.storage.sync.get(STORAGE_KEYS.SETTINGS);
+            const newSettings = { ...DEFAULT_SETTINGS, ...current[STORAGE_KEYS.SETTINGS], ...changesToSave };
+            await chrome.storage.sync.set({ [STORAGE_KEYS.SETTINGS]: newSettings });
+        }, 100);
     }
 
     function updateGlobalState(isEnabled) {

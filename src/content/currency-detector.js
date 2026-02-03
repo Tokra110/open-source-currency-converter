@@ -56,13 +56,15 @@ var CurrencyDetector = (() => {
   const isoBeforeRe = new RegExp(`\\b([A-Z]{3})\\s?(${numberPattern})`);
   const isoAfterRe = new RegExp(`(${numberPattern})\\s?([A-Z]{3})\\b`);
 
+  // Symbol regexes with negative lookbehind to prevent matching inside words (e.g., GDDR6)
+  // (?<![A-Za-z0-9]) ensures the symbol is not preceded by alphanumeric characters
   const symbolBeforeRegexes = sortedSymbols.map(symbol => ({
     symbol,
-    re: new RegExp(`(${escapeRegex(symbol)})\\s?(${numberPattern})`),
+    re: new RegExp(`(?<![A-Za-z0-9])(${escapeRegex(symbol)})\\s?(${numberPattern})`),
   }));
   const symbolAfterRegexes = sortedSymbols.map(symbol => ({
     symbol,
-    re: new RegExp(`(${numberPattern})\\s?(${escapeRegex(symbol)})`),
+    re: new RegExp(`(${numberPattern})\\s?(${escapeRegex(symbol)})(?![A-Za-z0-9])`),
   }));
 
   /**
