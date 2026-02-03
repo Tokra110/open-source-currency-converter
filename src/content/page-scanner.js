@@ -47,17 +47,35 @@ var PageScanner = (() => {
      */
     function updateSettings(config, ratesData) {
         const wasEnabled = isEnabled;
+
+        // Detect if we need to re-scan due to parameter changes
+        // Use optional chaining/fallback to ensure we don't crash if settings is null (though unlikely after init)
+        const oldSettings = settings || {};
+        const paramsChanged = (
+            oldSettings.targetCurrency !== config.targetCurrency ||
+            oldSettings.defaultDollarCurrency !== config.defaultDollarCurrency ||
+            oldSettings.numberFormat !== config.numberFormat
+        );
+
         settings = config;
         rates = ratesData;
         isEnabled = shouldBeEnabled(config);
 
         if (!isEnabled && wasEnabled) {
+            // Disabled: remove all changes
             restoreAll();
             cleanup();
         } else if (isEnabled && !wasEnabled) {
+            // Enabled: start scanning
             replacementCount = 0;
             scanPage();
             setupMutationObserver();
+        } else if (isEnabled && wasEnabled && paramsChanged) {
+            // Updated: reset and re-scan with new settings
+            restoreAll();
+            replacementCount = 0;
+            scanPage();
+            // Observer remains connected but will use new settings
         }
     }
 
@@ -185,6 +203,8 @@ var PageScanner = (() => {
      */
     function replaceCompositeElement(element, detection, fromCurrency, convertedAmount) {
         const fullOriginal = element.textContent.trim();
+        const originalRect = element.getBoundingClientRect();
+        const originalWidth = originalRect.width;
 
         // Add fade-out class and store original HTML
         const originalHTML = element.innerHTML;
@@ -199,8 +219,25 @@ var PageScanner = (() => {
             element.dataset.original = fullOriginal;
             element.dataset.originalHtml = originalHTML;
             element.dataset.fromCurrency = fromCurrency;
-            element.innerHTML = `${formatAmount(convertedAmount, settings.targetCurrency)} ${settings.targetCurrency}`;
             element.title = `Original: ${fullOriginal}`;
+
+            // Standard horizontal layout
+            const symbol = CURRENCY_CODE_TO_SYMBOL[settings.targetCurrency] || settings.targetCurrency;
+            element.innerHTML = `${formatAmount(convertedAmount, settings.targetCurrency)} ${symbol}`;
+
+            // Adjust font size if necessary to fit original width
+            // For stacked, we check the widest part (re-measuring new width handles this)
+            const newWidth = element.getBoundingClientRect().width;
+            if (originalWidth > 0 && newWidth > originalWidth) {
+                const ratio = originalWidth / newWidth;
+
+                // Clamp minimum font size to 8px for readability
+                let newFontSize = currentFontSize * ratio;
+                if (newFontSize < 8) newFontSize = 8;
+
+                element.style.fontSize = `${newFontSize}px`;
+                element.style.whiteSpace = 'nowrap';
+            }
         }, { once: true });
     }
 
@@ -328,6 +365,17 @@ var PageScanner = (() => {
             }
         }
 
+        // Measure original width using Range
+        let originalWidth = 0;
+        try {
+            const range = document.createRange();
+            range.setStart(textNode, actualMatchStart);
+            range.setEnd(textNode, actualMatchStart + fullOriginal.length);
+            originalWidth = range.getBoundingClientRect().width;
+        } catch (e) {
+            // Fallback if range fails (e.g. node detached)
+        }
+
         // Split text around the full match (including any orphaned symbol)
         const before = text.substring(0, actualMatchStart);
         const after = text.substring(actualMatchStart + fullOriginal.length);
@@ -355,10 +403,25 @@ var PageScanner = (() => {
             span.className = REPLACED_CLASS;
             span.dataset.original = fullOriginal;
             span.dataset.fromCurrency = fromCurrency;
-            span.textContent = `${formatAmount(convertedAmount, settings.targetCurrency)} ${settings.targetCurrency}`;
             span.title = `Original: ${fullOriginal}`;
 
+            const symbol = CURRENCY_CODE_TO_SYMBOL[settings.targetCurrency] || settings.targetCurrency;
+            span.textContent = `${formatAmount(convertedAmount, settings.targetCurrency)} ${symbol}`;
+
             fadeOutSpan.parentNode.replaceChild(span, fadeOutSpan);
+
+            // Adjust font size if necessary to fit original width
+            const newWidth = span.getBoundingClientRect().width;
+            if (originalWidth > 0 && newWidth > originalWidth) {
+                const ratio = originalWidth / newWidth;
+
+                // Clamp minimum font size to 8px for readability
+                let newFontSize = currentFontSize * ratio;
+                if (newFontSize < 8) newFontSize = 8;
+
+                span.style.fontSize = `${newFontSize}px`;
+                span.style.whiteSpace = 'nowrap';
+            }
         }, { once: true });
     }
 
