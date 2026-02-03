@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
-  "name": "Currency Converter",
-  "description": "Select any currency amount on a webpage and convert it to your preferred currency via right-click. Rates from the European Central Bank.",
+  "name": "Open Source Currency Converter",
+  "description": "Convert currency amounts on any webpage to your preferred currency. Rates from the European Central Bank.",
   "version": "1.0.0",
   "icons": {
     "16": "icons/icon16.png",

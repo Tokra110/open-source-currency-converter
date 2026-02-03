@@ -81,7 +81,7 @@
       const result = await chrome.storage.sync.get(STORAGE_KEYS.SETTINGS);
       return { ...DEFAULT_SETTINGS, ...(result[STORAGE_KEYS.SETTINGS] || {}) };
     } catch (err) {
-      console.warn('[CurrencyConverter] Failed to load settings:', err);
+      console.warn('[OpenSourceCurrencyConverter] Failed to load settings:', err);
       return DEFAULT_SETTINGS;
     }
   }
@@ -111,7 +111,7 @@
         PageScanner.init(settings, response.rates);
       }
     } catch (err) {
-      console.warn('[CurrencyConverter] Failed to init page scanner:', err);
+      console.warn('[OpenSourceCurrencyConverter] Failed to init page scanner:', err);
     }
   }
 
