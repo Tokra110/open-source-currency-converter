@@ -135,8 +135,24 @@
         }
       }
 
-      // Update theme for tooltip
-      if (newSettings.theme) currentTheme = newSettings.theme;
+      // Update theme for tooltip (and apply to any visible tooltip immediately)
+      if (newSettings.theme) {
+        const oldTheme = currentTheme;
+        currentTheme = newSettings.theme;
+
+        // Update existing tooltip theme class if visible
+        const tooltip = document.getElementById('currency-converter-tooltip');
+        if (tooltip && oldTheme !== currentTheme) {
+          const resolvedOld = oldTheme === 'system'
+            ? (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light')
+            : oldTheme;
+          const resolvedNew = currentTheme === 'system'
+            ? (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light')
+            : currentTheme;
+          tooltip.classList.remove(`cc-theme-${resolvedOld}`);
+          tooltip.classList.add(`cc-theme-${resolvedNew}`);
+        }
+      }
 
       // Update page scanner
       try {

@@ -139,11 +139,8 @@ var DEFAULT_SETTINGS = {
   targetCurrency: 'USD', // Default target currency
   defaultDollarCurrency: 'USD', // Default for generic '$'
   numberFormat: 'auto', // 'auto', 'us', 'eu'
-  lastRateUpdate: 0,
   extensionEnabled: true, // Master toggle
   conversionMode: 'auto', // 'auto' (wholescan) or 'interactive' (tooltip)
-  // Deprecated but kept for migration if needed, though we'll likely ignore it in new logic
-  autoReplaceEnabled: true,
   autoReplaceLimit: 100, // Max replacements per page to prevent freezing
   theme: 'system', // 'system', 'light', 'dark'
   disabledDomains: [] // List of domains where extension is disabled

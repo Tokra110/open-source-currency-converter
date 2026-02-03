@@ -191,6 +191,9 @@ var PageScanner = (() => {
         element.classList.add('cc-fading-out');
 
         element.addEventListener('animationend', () => {
+            // Guard: element may have been removed during animation
+            if (!element.parentNode) return;
+
             element.classList.remove('cc-fading-out');
             element.classList.add(REPLACED_CLASS);
             element.dataset.original = fullOriginal;
@@ -345,6 +348,9 @@ var PageScanner = (() => {
 
         // After fade-out animation completes, swap to converted value with fade-in
         fadeOutSpan.addEventListener('animationend', () => {
+            // Guard: element may have been removed during animation
+            if (!fadeOutSpan.parentNode) return;
+
             const span = document.createElement(WRAPPER_TAG);
             span.className = REPLACED_CLASS;
             span.dataset.original = fullOriginal;
@@ -409,11 +415,15 @@ var PageScanner = (() => {
             debounceTimer = setTimeout(() => {
                 if (isScanning || pendingNodes.length === 0) return;
 
+                // Capture current settings at processing time to avoid stale closure
+                const currentSettings = settings;
+                const currentLimit = currentSettings?.autoReplaceLimit ?? 100;
+
                 const nodesToProcess = pendingNodes.slice();
                 pendingNodes = [];
 
                 for (const node of nodesToProcess) {
-                    if (replacementCount >= settings.autoReplaceLimit) break;
+                    if (replacementCount >= currentLimit) break;
                     if (!document.contains(node)) continue; // Node was removed
 
                     if (node.nodeType === Node.ELEMENT_NODE) {
