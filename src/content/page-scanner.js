@@ -364,16 +364,17 @@ var PageScanner = (() => {
             }
         }
 
-        // Measure original width using Range
-        let originalWidth = 0;
+        // Measure original rect using Range BEFORE any DOM changes
+        let originalRect = null;
         try {
             const range = document.createRange();
             range.setStart(textNode, actualMatchStart);
             range.setEnd(textNode, actualMatchStart + fullOriginal.length);
-            originalWidth = range.getBoundingClientRect().width;
+            originalRect = range.getBoundingClientRect();
         } catch (e) {
             // Fallback if range fails (e.g. node detached)
         }
+
 
         // Split text around the full match (including any orphaned symbol)
         const before = text.substring(0, actualMatchStart);
@@ -398,18 +399,6 @@ var PageScanner = (() => {
             // Guard: element may have been removed during animation
             if (!fadeOutSpan.parentNode) return;
 
-            // Measure original position/size before swapping if we haven't yet
-            const originalRect = (() => {
-                try {
-                    const range = document.createRange();
-                    range.setStart(parent, Array.from(parent.childNodes).indexOf(fadeOutSpan));
-                    range.setEnd(parent, Array.from(parent.childNodes).indexOf(fadeOutSpan) + 1);
-                    return range.getBoundingClientRect();
-                } catch (e) {
-                    return null;
-                }
-            })();
-
             const span = document.createElement(WRAPPER_TAG);
             span.className = REPLACED_CLASS;
             span.dataset.original = fullOriginal;
@@ -432,29 +421,51 @@ var PageScanner = (() => {
      * @param {DOMRect} originalRect - The bounding box of the original text.
      */
     function adjustSizeIntelligently(element, originalRect) {
-        if (!originalRect || originalRect.width <= 0) return;
+        if (!originalRect || originalRect.width <= 0) {
+            return;
+        }
 
         const parent = element.parentElement;
-        if (!parent) return;
+        if (!parent) {
+            return;
+        }
 
         // 1. Reset any previous scaling to measure natural size
         element.style.fontSize = '';
         element.style.whiteSpace = 'nowrap';
 
         const newRect = element.getBoundingClientRect();
-        const parentRect = parent.getBoundingClientRect();
 
-        // 2. Check for "Bad Layout Impact"
+        // 2. Find a suitable ancestor container (not a tight wrapper)
+        // Walk up the DOM to find an element whose right edge is significantly larger than our text
+        let containerRect = null;
+        let ancestor = parent;
+        for (let i = 0; i < 5 && ancestor; i++) {
+            const rect = ancestor.getBoundingClientRect();
+            // A container has space if its right edge is at least 20px more than our text's right
+            if (rect.right > newRect.right + 20) {
+                containerRect = rect;
+                break;
+            }
+            ancestor = ancestor.parentElement;
+        }
+
+        // If we didn't find a spacious container, use the body or skip overflow check
+        if (!containerRect) {
+            containerRect = document.body.getBoundingClientRect();
+        }
+
+        // 3. Check for "Bad Layout Impact"
         // - Line Jump: If top of element shifted significantly down
         const lineJumped = newRect.top > originalRect.top + 5;
 
         // - Wrapping: If height increased significantly (shouldn't happen with nowrap but good guard)
         const wrapped = newRect.height > originalRect.height * 1.5;
 
-        // - Container Overflow: If right edge exceeds parent (with small margin)
-        const overflows = newRect.right > parentRect.right - 2;
+        // - Container Overflow: If right edge exceeds the ACTUAL container (not tight wrapper)
+        const overflows = newRect.right > containerRect.right - 2;
 
-        // 3. Fallback if layout broke
+        // 4. Fallback if layout broke
         if (lineJumped || wrapped || overflows) {
             const ratio = originalRect.width / newRect.width;
             const computedStyle = window.getComputedStyle(element);
@@ -467,6 +478,10 @@ var PageScanner = (() => {
         }
         // Else: Keep natural size! It "stretched its legs".
     }
+
+
+
+
 
     /**
      * Restore a single replaced element to its original text.
