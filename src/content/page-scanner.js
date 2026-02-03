@@ -235,22 +235,8 @@ var PageScanner = (() => {
             const symbol = CURRENCY_CODE_TO_SYMBOL[settings.targetCurrency] || settings.targetCurrency;
             element.innerHTML = `${formatAmount(convertedAmount, settings.targetCurrency)} ${symbol}`;
 
-            // Adjust font size if necessary to fit original width
-            // For stacked, we check the widest part (re-measuring new width handles this)
-            const newWidth = element.getBoundingClientRect().width;
-            if (originalWidth > 0 && newWidth > originalWidth) {
-                const ratio = originalWidth / newWidth;
-
-                // Clamp minimum font size to 8px for readability
-                const computedStyle = window.getComputedStyle(element);
-                const currentFontSize = parseFloat(computedStyle.fontSize) || 14;
-
-                let newFontSize = currentFontSize * ratio;
-                if (newFontSize < 8) newFontSize = 8;
-
-                element.style.fontSize = `${newFontSize}px`;
-                element.style.whiteSpace = 'nowrap';
-            }
+            // Adjust font size intelligently based on available space ("Leg Stretching")
+            adjustSizeIntelligently(element, originalRect);
         }, { once: true });
     }
 
@@ -412,6 +398,18 @@ var PageScanner = (() => {
             // Guard: element may have been removed during animation
             if (!fadeOutSpan.parentNode) return;
 
+            // Measure original position/size before swapping if we haven't yet
+            const originalRect = (() => {
+                try {
+                    const range = document.createRange();
+                    range.setStart(parent, Array.from(parent.childNodes).indexOf(fadeOutSpan));
+                    range.setEnd(parent, Array.from(parent.childNodes).indexOf(fadeOutSpan) + 1);
+                    return range.getBoundingClientRect();
+                } catch (e) {
+                    return null;
+                }
+            })();
+
             const span = document.createElement(WRAPPER_TAG);
             span.className = REPLACED_CLASS;
             span.dataset.original = fullOriginal;
@@ -423,22 +421,51 @@ var PageScanner = (() => {
 
             fadeOutSpan.parentNode.replaceChild(span, fadeOutSpan);
 
-            // Adjust font size if necessary to fit original width
-            const newWidth = span.getBoundingClientRect().width;
-            if (originalWidth > 0 && newWidth > originalWidth) {
-                const ratio = originalWidth / newWidth;
-
-                // Clamp minimum font size to 8px for readability
-                const computedStyle = window.getComputedStyle(span);
-                const currentFontSize = parseFloat(computedStyle.fontSize) || 14;
-
-                let newFontSize = currentFontSize * ratio;
-                if (newFontSize < 8) newFontSize = 8;
-
-                span.style.fontSize = `${newFontSize}px`;
-                span.style.whiteSpace = 'nowrap';
-            }
+            // Adjust font size intelligently based on available space ("Leg Stretching")
+            adjustSizeIntelligently(span, originalRect);
         }, { once: true });
+    }
+
+    /**
+     * Adjust font size intelligently based on available space ("Leg Stretching").
+     * @param {HTMLElement} element - The replaced element.
+     * @param {DOMRect} originalRect - The bounding box of the original text.
+     */
+    function adjustSizeIntelligently(element, originalRect) {
+        if (!originalRect || originalRect.width <= 0) return;
+
+        const parent = element.parentElement;
+        if (!parent) return;
+
+        // 1. Reset any previous scaling to measure natural size
+        element.style.fontSize = '';
+        element.style.whiteSpace = 'nowrap';
+
+        const newRect = element.getBoundingClientRect();
+        const parentRect = parent.getBoundingClientRect();
+
+        // 2. Check for "Bad Layout Impact"
+        // - Line Jump: If top of element shifted significantly down
+        const lineJumped = newRect.top > originalRect.top + 5;
+
+        // - Wrapping: If height increased significantly (shouldn't happen with nowrap but good guard)
+        const wrapped = newRect.height > originalRect.height * 1.5;
+
+        // - Container Overflow: If right edge exceeds parent (with small margin)
+        const overflows = newRect.right > parentRect.right - 2;
+
+        // 3. Fallback if layout broke
+        if (lineJumped || wrapped || overflows) {
+            const ratio = originalRect.width / newRect.width;
+            const computedStyle = window.getComputedStyle(element);
+            const currentFontSize = parseFloat(computedStyle.fontSize) || 14;
+
+            let newFontSize = currentFontSize * ratio;
+            if (newFontSize < 8) newFontSize = 8;
+
+            element.style.fontSize = `${newFontSize}px`;
+        }
+        // Else: Keep natural size! It "stretched its legs".
     }
 
     /**
