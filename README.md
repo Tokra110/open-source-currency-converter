@@ -1,4 +1,4 @@
-# Currency Converter - Chrome extension
+# Open Source Currency Converter - Chrome extension
 
 A Manifest V3 Chrome extension that detects currency amounts in selected text and converts them to your preferred currency via the right-click context menu.
 

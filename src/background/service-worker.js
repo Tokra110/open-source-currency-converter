@@ -1,5 +1,5 @@
 /**
- * Service worker for the currency converter extension.
+ * Service worker for the Open Source Currency Converter extension.
  * Handles: rate fetching alarms, message routing.
  * Uses importScripts to load shared modules and rates.
  */
@@ -19,7 +19,7 @@ chrome.runtime.onInstalled.addListener(async () => {
   try {
     await fetchRatesWithRetry();
   } catch (err) {
-    console.warn('[CurrencyConverter] Failed to fetch initial rates:', err.message);
+    console.warn('[OpenSourceCurrencyConverter] Failed to fetch initial rates:', err.message);
   }
 
   chrome.alarms.create(ALARM_NAME, { periodInMinutes: ALARM_PERIOD_MINUTES });
@@ -33,7 +33,7 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
   try {
     await fetchRatesWithRetry();
   } catch (err) {
-    console.warn('[CurrencyConverter] Alarm rate refresh failed, using cached rates:', err.message);
+    console.warn('[OpenSourceCurrencyConverter] Alarm rate refresh failed, using cached rates:', err.message);
   }
 });
 
@@ -86,7 +86,7 @@ async function handleManualSync(sendResponse) {
 
     sendResponse({ status: 'success', timestamp });
   } catch (err) {
-    console.error('[CurrencyConverter] Manual sync failed:', err);
+    console.error('[OpenSourceCurrencyConverter] Manual sync failed:', err);
     sendResponse({ status: 'error', message: err.message });
   }
 }
@@ -103,21 +103,21 @@ async function resolveRates() {
   }
 
   if (rates && isRateStale(timestamp)) {
-    console.warn('[CurrencyConverter] Cached rates are stale, attempting refresh.');
+    console.warn('[OpenSourceCurrencyConverter] Cached rates are stale, attempting refresh.');
     try {
       return await fetchRatesWithRetry();
     } catch (err) {
-      console.warn('[CurrencyConverter] Refresh failed, using stale rates:', err.message);
+      console.warn('[OpenSourceCurrencyConverter] Refresh failed, using stale rates:', err.message);
       return rates;
     }
   }
 
   // No cached rates at all
-  console.warn('[CurrencyConverter] No cached rates, attempting fresh fetch.');
+  console.warn('[OpenSourceCurrencyConverter] No cached rates, attempting fresh fetch.');
   try {
     return await fetchRatesWithRetry();
   } catch (err) {
-    console.error('[CurrencyConverter] Rate fetch failed:', err.message);
+    console.error('[OpenSourceCurrencyConverter] Rate fetch failed:', err.message);
     return null;
   }
 }
@@ -151,7 +151,7 @@ async function handleCurrencyDetected(message, sender) {
       }
     });
   } catch (err) {
-    console.error('[CurrencyConverter] Auto-conversion failed:', err.message);
+    console.error('[OpenSourceCurrencyConverter] Auto-conversion failed:', err.message);
   }
 }
 
@@ -189,6 +189,6 @@ async function handleRecalculation(message, sender) {
       }
     });
   } catch (err) {
-    console.error('[CurrencyConverter] Recalculation failed:', err.message);
+    console.error('[OpenSourceCurrencyConverter] Recalculation failed:', err.message);
   }
 }
