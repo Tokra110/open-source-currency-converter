@@ -109,6 +109,41 @@ var CURRENCY_NAMES = {
   ZAR: 'South African rand',
 };
 
+var CURRENCY_CODE_TO_SYMBOL = {
+  USD: '$',
+  EUR: '€',
+  GBP: '£',
+  JPY: '¥',
+  CNY: '¥',
+  INR: '₹',
+  KRW: '₩',
+  SEK: 'kr',
+  NOK: 'kr',
+  DKK: 'kr',
+  ISK: 'kr',
+  CHF: 'Fr',
+  PLN: 'zł',
+  HUF: 'Ft',
+  CZK: 'Kč',
+  RON: 'lei',
+  TRY: '₺',
+  BRL: 'R$',
+  ZAR: 'R',
+  PHP: '₱',
+  THB: '฿',
+  MYR: 'RM',
+  IDR: 'Rp',
+  ILS: '₪',
+  MXN: 'Mex$',
+  AUD: 'A$',
+  CAD: 'C$',
+  NZD: 'NZ$',
+  SGD: 'S$',
+  HKD: 'HK$',
+  BGN: 'лв',
+  HRK: 'kn'
+};
+
 
 var ECB_CURRENCIES = Object.keys(CURRENCY_NAMES);
 
@@ -141,7 +176,7 @@ var DEFAULT_SETTINGS = {
   numberFormat: 'auto', // 'auto', 'us', 'eu'
   extensionEnabled: true, // Master toggle
   conversionMode: 'auto', // 'auto' (wholescan) or 'interactive' (tooltip)
-  autoReplaceLimit: 100, // Max replacements per page to prevent freezing
+  autoReplaceLimit: 2000, // Max replacements per page to prevent freezing
   theme: 'system', // 'system', 'light', 'dark'
   disabledDomains: [] // List of domains where extension is disabled
 };
