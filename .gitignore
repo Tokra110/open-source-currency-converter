@@ -12,3 +12,6 @@ Thumbs.db
 publication_guide.md
 .claude
 tests/
+scripts/pack_extension.py
+TODO.md
+
