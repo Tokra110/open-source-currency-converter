@@ -145,7 +145,8 @@ var CurrencyDetector = (() => {
    * Build a match result object.
    */
   function buildResult(amount, currencies, original, symbol) {
-    if (amount == null || amount <= 0 || currencies.length === 0) return null;
+    // Allow zero-value amounts, but still reject negatives and invalid parses.
+    if (!Number.isFinite(amount) || amount < 0 || currencies.length === 0) return null;
     return { amount, currencies, original, symbol };
   }
 
