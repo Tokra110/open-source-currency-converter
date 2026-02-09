@@ -573,7 +573,7 @@ var PageScanner = (() => {
      * Convert currency locally using cached rates (same logic as service worker).
      */
     function convertCurrencyLocal(amount, from, to) {
-        if (!rates || !amount || from === to) return null;
+        if (!rates || !Number.isFinite(amount) || from === to) return null;
 
         try {
             // ECB rates are EUR-based
