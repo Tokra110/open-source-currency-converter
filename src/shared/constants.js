@@ -10,6 +10,13 @@
 
 var CURRENCY_SYMBOLS = {
   '$': ['USD', 'AUD', 'CAD', 'NZD', 'SGD', 'HKD'],
+  'US$': ['USD'],
+  'A$': ['AUD'],
+  'C$': ['CAD'],
+  'CA$': ['CAD'],
+  'NZ$': ['NZD'],
+  'S$': ['SGD'],
+  'HK$': ['HKD'],
   '€': ['EUR'],
   '£': ['GBP'],
   '¥': ['JPY', 'CNY'],
@@ -173,6 +180,9 @@ var ALARM_PERIOD_MINUTES = 1440; // 24 hours
 var DEFAULT_SETTINGS = {
   targetCurrency: 'USD', // Default target currency
   defaultDollarCurrency: 'USD', // Default for generic '$'
+  defaultYenCurrency: 'JPY', // Default for generic '¥'
+  defaultKrCurrency: 'SEK', // Default for generic 'kr'
+  defaultFrCurrency: 'CHF', // Default for generic 'Fr'
   numberFormat: 'auto', // 'auto', 'us', 'eu'
   extensionEnabled: true, // Master toggle
   conversionMode: 'auto', // 'auto' (wholescan) or 'interactive' (tooltip)
@@ -180,6 +190,42 @@ var DEFAULT_SETTINGS = {
   theme: 'system', // 'system', 'light', 'dark'
   disabledDomains: [] // List of domains where extension is disabled
 };
+
+var DOLLAR_TOKENS = new Set([
+  '$',
+  'dollar',
+  'dollars',
+  'buck',
+  'bucks',
+  'greenback',
+  'greenbacks',
+  'us dollar',
+  'us dollars',
+]);
+
+function getPreferredCurrencyForDetectionSymbol(symbol, settings) {
+  if (!symbol || !settings) return null;
+
+  const lower = symbol.toLowerCase();
+  if (DOLLAR_TOKENS.has(lower)) return settings.defaultDollarCurrency;
+  if (symbol === '¥') return settings.defaultYenCurrency;
+  if (lower === 'kr') return settings.defaultKrCurrency;
+  if (lower === 'fr') return settings.defaultFrCurrency;
+  return null;
+}
+
+function chooseDetectedCurrency(detection, settings) {
+  if (!detection || !Array.isArray(detection.currencies) || detection.currencies.length === 0) {
+    return null;
+  }
+
+  const preferred = getPreferredCurrencyForDetectionSymbol(detection.symbol, settings);
+  if (preferred && detection.currencies.includes(preferred)) {
+    return preferred;
+  }
+
+  return detection.currencies[0];
+}
 
 var STORAGE_KEYS = {
   SETTINGS: 'settings',

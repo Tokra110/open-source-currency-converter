@@ -21,6 +21,7 @@ var PageScanner = (() => {
     // Class used to mark replaced elements
     const REPLACED_CLASS = 'cc-auto-replaced';
     const WRAPPER_TAG = 'span';
+    const MAX_DETECTIONS_PER_TEXT_NODE = 25;
 
     // ========================================
     // DEBUG LOGGING INFRASTRUCTURE
@@ -186,6 +187,9 @@ var PageScanner = (() => {
         const paramsChanged = (
             oldSettings.targetCurrency !== config.targetCurrency ||
             oldSettings.defaultDollarCurrency !== config.defaultDollarCurrency ||
+            oldSettings.defaultYenCurrency !== config.defaultYenCurrency ||
+            oldSettings.defaultKrCurrency !== config.defaultKrCurrency ||
+            oldSettings.defaultFrCurrency !== config.defaultFrCurrency ||
             oldSettings.numberFormat !== config.numberFormat
         );
 
@@ -393,14 +397,15 @@ var PageScanner = (() => {
         const text = element.textContent.trim();
         if (!text || text.length > 50) return; // Too long to be just a price
 
-        const detection = CurrencyDetector.detectCurrency(text, settings.numberFormat);
+        const detection = CurrencyDetector.detectCurrency(text, settings.numberFormat, {
+            maxLength: 50,
+            startIndex: 0,
+        });
         if (!detection) return;
 
         // Resolve ambiguous currencies
-        let fromCurrency = detection.currencies[0];
-        if (detection.currencies.length > 1 && detection.currencies.includes(settings.defaultDollarCurrency)) {
-            fromCurrency = settings.defaultDollarCurrency;
-        }
+        const fromCurrency = chooseDetectedCurrency(detection, settings);
+        if (!fromCurrency) return;
 
         if (fromCurrency === settings.targetCurrency) return;
 
@@ -545,28 +550,51 @@ var PageScanner = (() => {
      * Process a single text node, replacing any detected currencies.
      */
     function processTextNode(textNode) {
-        const text = textNode.textContent;
-        if (!text || text.length > LIMITS.MAX_SELECTION_LENGTH * 2) return;
+        let currentTextNode = textNode;
+        let searchStart = 0;
+        let detectionsProcessed = 0;
 
-        const detection = CurrencyDetector.detectCurrency(text, settings.numberFormat);
-        if (!detection) return;
+        while (
+            currentTextNode &&
+            detectionsProcessed < MAX_DETECTIONS_PER_TEXT_NODE &&
+            replacementCount < settings.autoReplaceLimit
+        ) {
+            const text = currentTextNode.textContent;
+            if (!text || text.length > LIMITS.MAX_SELECTION_LENGTH * 2) return;
 
-        // Resolve ambiguous currencies using default dollar preference
-        let fromCurrency = detection.currencies[0];
-        if (detection.currencies.length > 1 && detection.currencies.includes(settings.defaultDollarCurrency)) {
-            fromCurrency = settings.defaultDollarCurrency;
+            const detection = CurrencyDetector.detectCurrency(text, settings.numberFormat, {
+                maxLength: LIMITS.MAX_SELECTION_LENGTH * 2,
+                startIndex: searchStart,
+            });
+            if (!detection) return;
+
+            const fromCurrency = chooseDetectedCurrency(detection, settings);
+            if (!fromCurrency) {
+                searchStart = detection.end;
+                detectionsProcessed++;
+                continue;
+            }
+
+            if (fromCurrency === settings.targetCurrency) {
+                searchStart = detection.end;
+                detectionsProcessed++;
+                continue;
+            }
+
+            const convertedAmount = convertCurrencyLocal(detection.amount, fromCurrency, settings.targetCurrency);
+            if (convertedAmount === null) {
+                searchStart = detection.end;
+                detectionsProcessed++;
+                continue;
+            }
+
+            const trailingTextNode = replaceInTextNode(currentTextNode, detection, fromCurrency, convertedAmount);
+            replacementCount++;
+            detectionsProcessed++;
+
+            currentTextNode = trailingTextNode;
+            searchStart = 0;
         }
-
-        // Skip if same as target
-        if (fromCurrency === settings.targetCurrency) return;
-
-        // Convert
-        const convertedAmount = convertCurrencyLocal(detection.amount, fromCurrency, settings.targetCurrency);
-        if (convertedAmount === null) return;
-
-        // Replace in DOM
-        replaceInTextNode(textNode, detection, fromCurrency, convertedAmount);
-        replacementCount++;
     }
 
     /**
@@ -633,16 +661,27 @@ var PageScanner = (() => {
         });
 
         const text = textNode.textContent;
-        let matchStart = text.indexOf(detection.original);
+        let matchStart = -1;
+        if (
+            Number.isInteger(detection.start) &&
+            Number.isInteger(detection.end) &&
+            detection.start >= 0 &&
+            detection.end <= text.length &&
+            text.substring(detection.start, detection.end) === detection.original
+        ) {
+            matchStart = detection.start;
+        } else {
+            matchStart = text.indexOf(detection.original);
+        }
         if (matchStart === -1) {
             debugWarn('replaceInTextNode', 'Match not found in text', { text, original: detection.original });
-            return;
+            return null;
         }
 
         const parent = textNode.parentNode;
         if (!parent) {
             debugWarn('replaceInTextNode', 'No parent node found', { textNodeInfo: getNodeDebugInfo(textNode) });
-            return;
+            return null;
         }
 
         // Log parent chain for debugging React issues
@@ -700,9 +739,13 @@ var PageScanner = (() => {
 
         // Build initial fragment with fade-out span
         const fragment = document.createDocumentFragment();
+        let trailingTextNode = null;
         if (before) fragment.appendChild(document.createTextNode(before));
         fragment.appendChild(fadeOutSpan);
-        if (after) fragment.appendChild(document.createTextNode(after));
+        if (after) {
+            trailingTextNode = document.createTextNode(after);
+            fragment.appendChild(trailingTextNode);
+        }
 
         // Replace original text node with fragment containing fade-out span
         // THIS IS A CRITICAL POINT WHERE REACT CONFLICTS CAN OCCUR
@@ -721,7 +764,7 @@ var PageScanner = (() => {
 
         if (!replaceSuccess) {
             debugError('replaceInTextNode', 'Initial replacement failed, aborting', null, { replaceOpId });
-            return;
+            return null;
         }
 
         debugLog('replaceInTextNode', 'Initial replacement successful, setting up animation listener', {
@@ -815,6 +858,7 @@ var PageScanner = (() => {
         }, { once: true });
 
         debugLog('replaceInTextNode', 'Replacement setup complete', { replaceOpId });
+        return trailingTextNode;
     }
 
     /**
