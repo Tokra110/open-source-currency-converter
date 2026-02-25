@@ -64,7 +64,10 @@
       return;
     }
 
-    const detection = CurrencyDetector.detectCurrency(text, settings.numberFormat);
+    const detection = CurrencyDetector.detectCurrency(text, settings.numberFormat, {
+      maxLength: LIMITS.MAX_SELECTION_LENGTH,
+      startIndex: 0,
+    });
 
     if (!detection) {
       lastDetection = null;

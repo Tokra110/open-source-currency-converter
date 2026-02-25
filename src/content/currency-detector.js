@@ -40,31 +40,34 @@ var CurrencyDetector = (() => {
 
   const keywordPattern = sortedKeywords.map(escapeRegex).join('|');
 
-  // Matches: 1000, 1,000, 1.000, 1,000.50, 1.000,50, 100.5, 100,5
-  const numberPattern = '\\d{1,3}(?:[.,\\s]\\d{3})*(?:[.,]\\d{1,2})?|\\d+(?:[.,]\\d{1,2})?';
+  // Matches: 1000, 1,000, 1.000, 1,000.50, 1.000,50, 100.5, 100,5, .99, ,99
+  const numberPattern = '(?:\\d{1,3}(?:[.,\\s]\\d{3})+(?:[.,]\\d{1,2})?|\\d+(?:[.,]\\d{1,2})?|[.,]\\d{1,2})';
+  const signPattern = '[+\\-−]';
+  const leftBoundary = '(?<![A-Za-z0-9_.-])';
+  const rightBoundary = '(?![A-Za-z0-9_.-])';
 
   const isoCodesSet = new Set(ECB_CURRENCIES);
 
   // Pre-compile regexes once at init time (avoids re-creation on every detectCurrency call)
   const kwAfterRe = keywordPattern
-    ? new RegExp(`(${numberPattern})\\s?(${keywordPattern})\\b`, 'i')
+    ? new RegExp(`${leftBoundary}(?:(${signPattern})\\s*)?(${numberPattern})\\s*(${keywordPattern})\\b${rightBoundary}`, 'ig')
     : null;
   const kwBeforeRe = keywordPattern
-    ? new RegExp(`\\b(${keywordPattern})\\s?(${numberPattern})`, 'i')
+    ? new RegExp(`${leftBoundary}(${keywordPattern})\\s*(?:(${signPattern})\\s*)?(${numberPattern})${rightBoundary}`, 'ig')
     : null;
 
-  const isoBeforeRe = new RegExp(`\\b([A-Z]{3})\\s?(${numberPattern})`);
-  const isoAfterRe = new RegExp(`(${numberPattern})\\s?([A-Z]{3})\\b`);
+  const isoBeforeRe = new RegExp(`${leftBoundary}([A-Z]{3})\\s*(?:(${signPattern})\\s*)?(${numberPattern})${rightBoundary}`, 'ig');
+  const isoAfterRe = new RegExp(`${leftBoundary}(?:(${signPattern})\\s*)?(${numberPattern})\\s*([A-Z]{3})${rightBoundary}`, 'ig');
 
   // Symbol regexes with negative lookbehind to prevent matching inside words (e.g., GDDR6)
   // (?<![A-Za-z0-9]) ensures the symbol is not preceded by alphanumeric characters
   const symbolBeforeRegexes = sortedSymbols.map(symbol => ({
     symbol,
-    re: new RegExp(`(?<![A-Za-z0-9])(${escapeRegex(symbol)})\\s?(${numberPattern})`),
+    re: new RegExp(`${leftBoundary}(?:(${signPattern})\\s*)?(${escapeRegex(symbol)})\\s*(?:(${signPattern})\\s*)?(${numberPattern})${rightBoundary}`, 'g'),
   }));
   const symbolAfterRegexes = sortedSymbols.map(symbol => ({
     symbol,
-    re: new RegExp(`(${numberPattern})\\s?(${escapeRegex(symbol)})(?![A-Za-z0-9])`),
+    re: new RegExp(`${leftBoundary}(?:(${signPattern})\\s*)?(${numberPattern})\\s*(${escapeRegex(symbol)})${rightBoundary}`, 'g'),
   }));
 
   /**
@@ -124,6 +127,43 @@ var CurrencyDetector = (() => {
     return parseFloat(cleaned);
   }
 
+  function isNegativeSign(sign) {
+    return sign === '-' || sign === '−';
+  }
+
+  function isNegativeBySign(signs) {
+    return signs.some(isNegativeSign);
+  }
+
+  function scanRegexForResult(re, text, startIndex, buildFromMatch) {
+    if (!re) return null;
+
+    re.lastIndex = startIndex;
+    let match;
+    while ((match = re.exec(text)) !== null) {
+      const start = match.index;
+      const end = start + match[0].length;
+      const result = buildFromMatch(match, start, end);
+      if (result) return result;
+
+      // Safety: ensure progress even on unexpected zero-width scenarios.
+      if (re.lastIndex <= start) {
+        re.lastIndex = start + 1;
+      }
+    }
+
+    return null;
+  }
+
+  function pickEarlier(a, b) {
+    if (!a) return b;
+    if (!b) return a;
+    if (b.start < a.start) return b;
+    if (b.start > a.start) return a;
+    if (b.original.length > a.original.length) return b;
+    return a;
+  }
+
   /**
    * Identify which currencies a symbol, code, or keyword represents.
    */
@@ -144,106 +184,113 @@ var CurrencyDetector = (() => {
   /**
    * Build a match result object.
    */
-  function buildResult(amount, currencies, original, symbol) {
+  function buildResult(amount, currencies, original, symbol, start, end, signs = []) {
     // Allow zero-value amounts, but still reject negatives and invalid parses.
     if (!Number.isFinite(amount) || amount < 0 || currencies.length === 0) return null;
-    return { amount, currencies, original, symbol };
+    if (isNegativeBySign(signs)) return null;
+    return { amount, currencies, original, symbol, start, end };
   }
 
   /**
    * Try to detect currency via keywords like "dollars", "bucks", "euro".
    */
-  function detectByKeyword(text, numberFormat) {
+  function detectByKeyword(text, numberFormat, startIndex) {
     if (!kwAfterRe) return null;
 
     // Number before keyword: "20 dollars"
-    const kwAfter = text.match(kwAfterRe);
-    if (kwAfter) {
-      const amount = parseNumber(kwAfter[1], numberFormat);
-      const currencies = identifyCurrencies(kwAfter[2]);
-      const result = buildResult(amount, currencies, kwAfter[0], kwAfter[2]);
-      if (result) return result;
-    }
+    const afterResult = scanRegexForResult(kwAfterRe, text, startIndex, (match, start, end) => {
+      const amount = parseNumber(match[2], numberFormat);
+      const currencies = identifyCurrencies(match[3]);
+      return buildResult(amount, currencies, match[0], match[3], start, end, [match[1]]);
+    });
 
     // Keyword before number: "US Dollars 20"
-    const kwBefore = text.match(kwBeforeRe);
-    if (kwBefore) {
-      const amount = parseNumber(kwBefore[2], numberFormat);
-      const currencies = identifyCurrencies(kwBefore[1]);
-      const result = buildResult(amount, currencies, kwBefore[0], kwBefore[1]);
-      if (result) return result;
-    }
+    const beforeResult = scanRegexForResult(kwBeforeRe, text, startIndex, (match, start, end) => {
+      const amount = parseNumber(match[3], numberFormat);
+      const currencies = identifyCurrencies(match[1]);
+      return buildResult(amount, currencies, match[0], match[1], start, end, [match[2]]);
+    });
 
-    return null;
+    return pickEarlier(afterResult, beforeResult);
   }
 
   /**
    * Try to detect currency via ISO codes like "USD", "EUR".
    */
-  function detectByIsoCode(text, numberFormat) {
+  function detectByIsoCode(text, numberFormat, startIndex) {
     // ISO code before number: "USD 100"
-    const isoBefore = text.match(isoBeforeRe);
-    if (isoBefore && isoCodesSet.has(isoBefore[1])) {
-      const amount = parseNumber(isoBefore[2], numberFormat);
-      const result = buildResult(amount, [isoBefore[1]], isoBefore[0], isoBefore[1]);
-      if (result) return result;
-    }
+    const beforeResult = scanRegexForResult(isoBeforeRe, text, startIndex, (match, start, end) => {
+      const iso = match[1].toUpperCase();
+      if (!isoCodesSet.has(iso)) return null;
+      const amount = parseNumber(match[3], numberFormat);
+      return buildResult(amount, [iso], match[0], match[1], start, end, [match[2]]);
+    });
 
     // Number before ISO code: "100 USD"
-    const isoAfter = text.match(isoAfterRe);
-    if (isoAfter && isoCodesSet.has(isoAfter[2])) {
-      const amount = parseNumber(isoAfter[1], numberFormat);
-      const result = buildResult(amount, [isoAfter[2]], isoAfter[0], isoAfter[2]);
-      if (result) return result;
-    }
+    const afterResult = scanRegexForResult(isoAfterRe, text, startIndex, (match, start, end) => {
+      const iso = match[3].toUpperCase();
+      if (!isoCodesSet.has(iso)) return null;
+      const amount = parseNumber(match[2], numberFormat);
+      return buildResult(amount, [iso], match[0], match[3], start, end, [match[1]]);
+    });
 
-    return null;
+    return pickEarlier(beforeResult, afterResult);
   }
 
   /**
    * Try to detect currency via symbols like "$", "EUR", "£".
    */
-  function detectBySymbol(text, numberFormat) {
+  function detectBySymbol(text, numberFormat, startIndex) {
+    let best = null;
+
     // Symbol before number: "$100"
     for (const { re } of symbolBeforeRegexes) {
-      const match = text.match(re);
-      if (match) {
-        const amount = parseNumber(match[2], numberFormat);
-        const currencies = identifyCurrencies(match[1]);
-        const result = buildResult(amount, currencies, match[0], match[1]);
-        if (result) return result;
-      }
+      const result = scanRegexForResult(re, text, startIndex, (match, start, end) => {
+        const amount = parseNumber(match[4], numberFormat);
+        const currencies = identifyCurrencies(match[2]);
+        return buildResult(amount, currencies, match[0], match[2], start, end, [match[1], match[3]]);
+      });
+      best = pickEarlier(best, result);
     }
 
     // Number before symbol: "100$"
     for (const { re } of symbolAfterRegexes) {
-      const match = text.match(re);
-      if (match) {
-        const amount = parseNumber(match[1], numberFormat);
-        const currencies = identifyCurrencies(match[2]);
-        const result = buildResult(amount, currencies, match[0], match[2]);
-        if (result) return result;
-      }
+      const result = scanRegexForResult(re, text, startIndex, (match, start, end) => {
+        const amount = parseNumber(match[2], numberFormat);
+        const currencies = identifyCurrencies(match[3]);
+        return buildResult(amount, currencies, match[0], match[3], start, end, [match[1]]);
+      });
+      best = pickEarlier(best, result);
     }
 
-    return null;
+    return best;
   }
 
   /**
    * Detect currency amount in the given text.
-   * Tries keyword, ISO code, then symbol detection in priority order.
+   * Finds the earliest valid match across keyword, ISO, and symbol detection.
    *
    * @param {string} text - Selected text to analyze
    * @param {string} numberFormat - 'auto', 'us', or 'eu'
-   * @returns {{ amount: number, currencies: string[], original: string, symbol: string } | null}
+   * @param {{ maxLength?: number, startIndex?: number }} options - Detection options
+   * @returns {{ amount: number, currencies: string[], original: string, symbol: string, start: number, end: number } | null}
    */
-  function detectCurrency(text, numberFormat = 'auto') {
-    if (!text || text.length > LIMITS.MAX_SELECTION_LENGTH) return null;
-    const trimmed = text.trim();
+  function detectCurrency(text, numberFormat = 'auto', options = {}) {
+    if (!text) return null;
 
-    return detectByKeyword(trimmed, numberFormat)
-      || detectByIsoCode(trimmed, numberFormat)
-      || detectBySymbol(trimmed, numberFormat);
+    const maxLength = Number.isFinite(options.maxLength) ? options.maxLength : null;
+    if (maxLength != null && text.length > maxLength) return null;
+
+    const startIndex = Number.isFinite(options.startIndex)
+      ? Math.max(0, Math.floor(options.startIndex))
+      : 0;
+    if (startIndex >= text.length) return null;
+
+    const keywordResult = detectByKeyword(text, numberFormat, startIndex);
+    const isoResult = detectByIsoCode(text, numberFormat, startIndex);
+    const symbolResult = detectBySymbol(text, numberFormat, startIndex);
+
+    return pickEarlier(pickEarlier(keywordResult, isoResult), symbolResult);
   }
 
   return { detectCurrency, parseNumber };

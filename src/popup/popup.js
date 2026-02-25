@@ -7,6 +7,9 @@ document.addEventListener('DOMContentLoaded', async () => {
     const modeInteractive = document.getElementById('modeInteractive');
     const targetCurrency = document.getElementById('targetCurrency');
     const defaultDollarCurrency = document.getElementById('defaultDollarCurrency');
+    const defaultYenCurrency = document.getElementById('defaultYenCurrency');
+    const defaultKrCurrency = document.getElementById('defaultKrCurrency');
+    const defaultFrCurrency = document.getElementById('defaultFrCurrency');
     const numberFormat = document.getElementById('numberFormat');
     const lastSynced = document.getElementById('lastSynced');
     const syncBtn = document.getElementById('syncBtn');
@@ -40,6 +43,9 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     targetCurrency.value = settings.targetCurrency;
     defaultDollarCurrency.value = settings.defaultDollarCurrency;
+    defaultYenCurrency.value = settings.defaultYenCurrency;
+    defaultKrCurrency.value = settings.defaultKrCurrency;
+    defaultFrCurrency.value = settings.defaultFrCurrency;
     numberFormat.value = settings.numberFormat;
 
     // Load last sync time from local storage (where rates are cached)
@@ -68,6 +74,9 @@ document.addEventListener('DOMContentLoaded', async () => {
     // 3. Dropdowns
     targetCurrency.addEventListener('change', (e) => saveSetting('targetCurrency', e.target.value));
     defaultDollarCurrency.addEventListener('change', (e) => saveSetting('defaultDollarCurrency', e.target.value));
+    defaultYenCurrency.addEventListener('change', (e) => saveSetting('defaultYenCurrency', e.target.value));
+    defaultKrCurrency.addEventListener('change', (e) => saveSetting('defaultKrCurrency', e.target.value));
+    defaultFrCurrency.addEventListener('change', (e) => saveSetting('defaultFrCurrency', e.target.value));
     numberFormat.addEventListener('change', (e) => saveSetting('numberFormat', e.target.value));
 
     // 4. Sync Button

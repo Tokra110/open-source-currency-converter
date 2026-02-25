@@ -124,15 +124,15 @@ async function resolveRates() {
 
 async function handleCurrencyDetected(message, sender) {
   const settingsResult = await chrome.storage.sync.get(STORAGE_KEYS.SETTINGS);
-  const config = settingsResult[STORAGE_KEYS.SETTINGS] || DEFAULT_SETTINGS;
+  const config = { ...DEFAULT_SETTINGS, ...(settingsResult[STORAGE_KEYS.SETTINGS] || {}) };
 
   if (!message.detection || message.detection.selectionText.length > LIMITS.MAX_SELECTION_LENGTH) return;
 
   const rates = await resolveRates();
   if (!rates) return;
 
-  const ordered = reorderCurrencies(message.detection.currencies, config.defaultDollarCurrency);
-  const fromCurrency = ordered[0];
+  const fromCurrency = chooseDetectedCurrency(message.detection, config);
+  if (!fromCurrency) return;
 
   if (fromCurrency === config.targetCurrency) return;
 
@@ -153,19 +153,6 @@ async function handleCurrencyDetected(message, sender) {
   } catch (err) {
     console.error('[OpenSourceCurrencyConverter] Auto-conversion failed:', err.message);
   }
-}
-
-/**
- * Reorder currencies array so the preferred one comes first.
- */
-function reorderCurrencies(currencies, preferred) {
-  if (!preferred) return currencies;
-  const idx = currencies.indexOf(preferred);
-  if (idx <= 0) return currencies;
-  const copy = [...currencies];
-  copy.splice(idx, 1);
-  copy.unshift(preferred);
-  return copy;
 }
 
 async function handleRecalculation(message, sender) {

@@ -14,4 +14,7 @@ publication_guide.md
 tests/
 scripts/pack_extension.py
 TODO.md
-
+docs/currency-detection-audit.md
+docs/currency-detection-testbed.html
+.vscode/launch.json
+scripts
