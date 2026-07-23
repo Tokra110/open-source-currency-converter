@@ -71,6 +71,10 @@ function run() {
     assert.strictEqual(d.original, sample);
   }
   assert.strictEqual(detector.detectCurrency("$1'234.56", 'auto', { maxLength: 200 }), null);
+  d = detector.detectCurrency('-₹1,23,456', 'auto', { maxLength: 200 });
+  assert(d && d.amount === -123456 && d.currencies[0] === 'INR');
+  d = detector.detectCurrency("-CHF 1'234.56", 'auto', { maxLength: 200 });
+  assert(d && d.amount === -1234.56 && d.currencies[0] === 'CHF');
 
   // Signed refunds and accounting parentheses preserve their negative meaning.
   d = detector.detectCurrency('-€10', 'auto', { maxLength: 200 });
