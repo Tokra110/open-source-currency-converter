@@ -221,12 +221,32 @@ var PageScanner = (() => {
         // Must be globally enabled AND in auto mode
         if (!config.extensionEnabled || config.conversionMode !== 'auto') return false;
 
+        if (isSensitiveEmbeddedFrame(document, window)) return false;
+
         // Check if current site is disabled
         if (config.disabledDomains && config.disabledDomains.includes(window.location.hostname)) {
             return false;
         }
 
         return true;
+    }
+
+    function isSensitiveEmbeddedFrame(frameDocument, frameWindow) {
+        if (!frameWindow || frameWindow.top === frameWindow.self) return false;
+
+        const sensitiveFieldSelector = [
+            'input[type="password"]',
+            'input[autocomplete="current-password"]',
+            'input[autocomplete="new-password"]',
+            'input[autocomplete^="cc-"]',
+            'input[autocomplete="one-time-code"]',
+        ].join(', ');
+
+        try {
+            return !!frameDocument?.querySelector(sensitiveFieldSelector);
+        } catch {
+            return true;
+        }
     }
 
     /**
@@ -1164,5 +1184,6 @@ var PageScanner = (() => {
         cleanup,
         getReplacementCount,
         shouldSkipNode,
+        isSensitiveEmbeddedFrame,
     };
 })();

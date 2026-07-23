@@ -32,4 +32,22 @@ assert.strictEqual(context.PageScanner.shouldSkipNode({ parentElement: element('
 assert.strictEqual(context.PageScanner.shouldSkipNode({ parentElement: element('OPTION') }), true);
 assert.strictEqual(context.PageScanner.shouldSkipNode({ parentElement: element('P') }), false);
 
+const embeddedWindow = { top: {}, self: {} };
+const safeFrameDocument = { querySelector: () => null };
+const sensitiveFrameDocument = {
+  querySelector: () => ({ tagName: 'INPUT' }),
+};
+assert.strictEqual(
+  context.PageScanner.isSensitiveEmbeddedFrame(safeFrameDocument, embeddedWindow),
+  false,
+);
+assert.strictEqual(
+  context.PageScanner.isSensitiveEmbeddedFrame(sensitiveFrameDocument, embeddedWindow),
+  true,
+);
+assert.strictEqual(
+  context.PageScanner.isSensitiveEmbeddedFrame(sensitiveFrameDocument, { top: null, self: null }),
+  false,
+);
+
 console.log('page-scanner: all tests passed');
