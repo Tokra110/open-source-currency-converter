@@ -495,8 +495,11 @@ var PageScanner = (() => {
             element.title = `Original: ${fullOriginal}`;
 
             // Standard horizontal layout
-            const symbol = CURRENCY_CODE_TO_SYMBOL[settings.targetCurrency] || settings.targetCurrency;
-            const newContent = `${formatAmount(convertedAmount, settings.targetCurrency)} ${symbol}`;
+            const newContent = formatReplacement(
+                convertedAmount,
+                settings.targetCurrency,
+                detection.negativeStyle,
+            );
 
             debugLog('compositeAnimationend', 'About to set innerHTML', {
                 compositeOpId,
@@ -635,6 +638,13 @@ var PageScanner = (() => {
      */
     function formatAmount(amount, currencyCode) {
         return formatCurrencyAmount(amount, currencyCode, settings?.outputFormat);
+    }
+
+    function formatReplacement(amount, currencyCode, negativeStyle) {
+        const symbol = CURRENCY_CODE_TO_SYMBOL[currencyCode] || currencyCode;
+        const value = negativeStyle === 'parentheses' ? Math.abs(amount) : amount;
+        const label = `${formatAmount(value, currencyCode)} ${symbol}`;
+        return negativeStyle === 'parentheses' ? `(${label})` : label;
     }
 
     /**
@@ -803,8 +813,11 @@ var PageScanner = (() => {
             span.dataset.fromCurrency = fromCurrency;
             span.title = `Original: ${fullOriginal}`;
 
-            const symbol = CURRENCY_CODE_TO_SYMBOL[settings.targetCurrency] || settings.targetCurrency;
-            span.textContent = `${formatAmount(convertedAmount, settings.targetCurrency)} ${symbol}`;
+            span.textContent = formatReplacement(
+                convertedAmount,
+                settings.targetCurrency,
+                detection.negativeStyle,
+            );
 
             // Track the new span
             registerElement(span, 'replacedSpan-created');
