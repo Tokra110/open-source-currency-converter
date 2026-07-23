@@ -157,6 +157,23 @@ var ECB_CURRENCIES = Object.keys(CURRENCY_NAMES);
 // Currencies that typically don't use decimal places (or have very low unit value)
 var ZERO_DECIMAL_CURRENCIES = ['HUF', 'JPY', 'KRW', 'IDR', 'ISK'];
 
+function resolveOutputLocale(outputFormat, browserLocale) {
+  if (outputFormat === 'us') return 'en-US';
+  if (outputFormat === 'eu') return 'de-DE';
+  return browserLocale;
+}
+
+function formatCurrencyAmount(amount, currencyCode, outputFormat = 'smart', browserLocale) {
+  if (typeof amount !== 'number' || !Number.isFinite(amount)) return String(amount);
+
+  const digits = ZERO_DECIMAL_CURRENCIES.includes(currencyCode) ? 0 : 2;
+  const locale = resolveOutputLocale(outputFormat, browserLocale);
+  return new Intl.NumberFormat(locale, {
+    minimumFractionDigits: digits,
+    maximumFractionDigits: digits,
+  }).format(amount);
+}
+
 
 var TIMING = {
   DEBOUNCE_MS: 300,
@@ -184,6 +201,7 @@ var DEFAULT_SETTINGS = {
   defaultKrCurrency: 'SEK', // Default for generic 'kr'
   defaultFrCurrency: 'CHF', // Default for generic 'Fr'
   numberFormat: 'auto', // 'auto', 'us', 'eu'
+  outputFormat: 'smart', // 'smart' follows browser locale; 'us' and 'eu' are explicit
   extensionEnabled: true, // Master toggle
   conversionMode: 'auto', // 'auto' (wholescan) or 'interactive' (tooltip)
   autoReplaceLimit: 2000, // Max replacements per page to prevent freezing

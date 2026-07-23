@@ -11,6 +11,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     const defaultKrCurrency = document.getElementById('defaultKrCurrency');
     const defaultFrCurrency = document.getElementById('defaultFrCurrency');
     const numberFormat = document.getElementById('numberFormat');
+    const outputFormat = document.getElementById('outputFormat');
     const lastSynced = document.getElementById('lastSynced');
     const syncBtn = document.getElementById('syncBtn');
     const msgLog = document.getElementById('msgLog');
@@ -47,6 +48,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     defaultKrCurrency.value = settings.defaultKrCurrency;
     defaultFrCurrency.value = settings.defaultFrCurrency;
     numberFormat.value = settings.numberFormat;
+    outputFormat.value = settings.outputFormat;
 
     // Load last sync time from local storage (where rates are cached)
     const ratesData = await chrome.storage.local.get(STORAGE_KEYS.RATES_TIMESTAMP);
@@ -78,6 +80,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     defaultKrCurrency.addEventListener('change', (e) => saveSetting('defaultKrCurrency', e.target.value));
     defaultFrCurrency.addEventListener('change', (e) => saveSetting('defaultFrCurrency', e.target.value));
     numberFormat.addEventListener('change', (e) => saveSetting('numberFormat', e.target.value));
+    outputFormat.addEventListener('change', (e) => saveSetting('outputFormat', e.target.value));
 
     // 4. Sync Button
     syncBtn.addEventListener('click', async () => {
