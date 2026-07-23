@@ -59,6 +59,19 @@ function run() {
   }
   assert.strictEqual(detector.detectCurrency('$1,23,456.78', 'auto', { maxLength: 200 }), null);
 
+  // Apostrophe grouping is supported only when the source is explicitly CHF.
+  const swissSamples = [
+    ["CHF 1'234.56", 1234.56],
+    ['1’234,56 Fr.', 1234.56],
+    ["Swiss francs 1'234.50", 1234.5],
+  ];
+  for (const [sample, amount] of swissSamples) {
+    d = detector.detectCurrency(sample, 'auto', { maxLength: 200 });
+    assert(d && d.amount === amount && d.currencies[0] === 'CHF');
+    assert.strictEqual(d.original, sample);
+  }
+  assert.strictEqual(detector.detectCurrency("$1'234.56", 'auto', { maxLength: 200 }), null);
+
   // Negative handling: signed negatives are explicitly rejected.
   d = detector.detectCurrency('-€10', 'auto', { maxLength: 200 });
   assert.strictEqual(d, null);
