@@ -72,15 +72,19 @@ function run() {
   }
   assert.strictEqual(detector.detectCurrency("$1'234.56", 'auto', { maxLength: 200 }), null);
 
-  // Negative handling: signed negatives are explicitly rejected.
+  // Signed refunds and accounting parentheses preserve their negative meaning.
   d = detector.detectCurrency('-€10', 'auto', { maxLength: 200 });
-  assert.strictEqual(d, null);
+  assert(d && d.amount === -10 && d.negativeStyle === 'sign');
 
   d = detector.detectCurrency('-€10 and $5', 'auto', { maxLength: 200 });
-  assert(d && d.symbol === '$' && d.amount === 5);
+  assert(d && d.symbol === '€' && d.amount === -10);
 
   d = detector.detectCurrency('Refund -1 Ft then 2 Ft', 'auto', { maxLength: 200 });
-  assert(d && d.amount === 2 && d.original.includes('2 Ft'));
+  assert(d && d.amount === -1 && d.original.includes('-1 Ft'));
+
+  d = detector.detectCurrency('Refund: ($20.00)', 'auto', { maxLength: 200 });
+  assert(d && d.amount === -20 && d.negativeStyle === 'parentheses');
+  assert.strictEqual(d.original, '($20.00)');
 
   // Boundary hardening: avoid IDs/version tokens.
   assert.strictEqual(detector.detectCurrency('R2D2', 'auto', { maxLength: 200 }), null);
@@ -96,11 +100,12 @@ function run() {
 
   // Multi-amount flow for one text node (iterative scanning by startIndex).
   const all = detectAll(detector, '$5 and €0 and A$10 and -¥50 and 12 kr');
-  assert.strictEqual(all.length, 4);
+  assert.strictEqual(all.length, 5);
   assert(all[0].original.includes('$5'));
   assert(all[1].original.includes('€0'));
   assert(all[2].original.includes('A$10'));
-  assert(all[3].original.includes('12 kr'));
+  assert(all[3].original.includes('-¥50') && all[3].amount === -50);
+  assert(all[4].original.includes('12 kr'));
 
   // Ambiguous symbol preferences.
   const settings = {

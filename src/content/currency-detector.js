@@ -213,10 +213,39 @@ var CurrencyDetector = (() => {
    * Build a match result object.
    */
   function buildResult(amount, currencies, original, symbol, start, end, signs = []) {
-    // Allow zero-value amounts, but still reject negatives and invalid parses.
-    if (!Number.isFinite(amount) || amount < 0 || currencies.length === 0) return null;
-    if (isNegativeBySign(signs)) return null;
-    return { amount, currencies, original, symbol, start, end };
+    if (!Number.isFinite(amount) || currencies.length === 0) return null;
+    const isNegative = amount < 0 || isNegativeBySign(signs);
+    return {
+      amount: isNegative ? -Math.abs(amount) : amount,
+      currencies,
+      original,
+      symbol,
+      start,
+      end,
+      negativeStyle: isNegative ? 'sign' : null,
+    };
+  }
+
+  function applyAccountingParentheses(result, text) {
+    if (!result) return null;
+
+    let left = result.start - 1;
+    while (left >= 0 && /\s/.test(text[left])) left--;
+    let right = result.end;
+    while (right < text.length && /\s/.test(text[right])) right++;
+
+    if (left >= 0 && text[left] === '(' && right < text.length && text[right] === ')') {
+      return {
+        ...result,
+        amount: -Math.abs(result.amount),
+        original: text.substring(left, right + 1),
+        start: left,
+        end: right + 1,
+        negativeStyle: 'parentheses',
+      };
+    }
+
+    return result;
   }
 
   /**
@@ -374,10 +403,11 @@ var CurrencyDetector = (() => {
     const indianResult = detectByIndianGrouping(text, startIndex);
     const swissResult = detectBySwissGrouping(text, startIndex);
 
-    return pickEarlier(
+    const result = pickEarlier(
       pickEarlier(pickEarlier(pickEarlier(keywordResult, isoResult), symbolResult), indianResult),
       swissResult,
     );
+    return applyAccountingParentheses(result, text);
   }
 
   return { detectCurrency, parseNumber };
