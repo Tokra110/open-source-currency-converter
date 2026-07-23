@@ -105,9 +105,18 @@
                 </div>
 
                 <div class="form-group">
-                    <label for="numberFormat">Format</label>
+                    <label for="numberFormat">Read prices as</label>
                     <select id="numberFormat">
                         <option value="auto">Auto-detect</option>
+                        <option value="us">1,234.56</option>
+                        <option value="eu">1.234,56</option>
+                    </select>
+                </div>
+
+                <div class="form-group">
+                    <label for="outputFormat">Display conversions as</label>
+                    <select id="outputFormat">
+                        <option value="smart">Smart (browser preference)</option>
                         <option value="us">1,234.56</option>
                         <option value="eu">1.234,56</option>
                     </select>

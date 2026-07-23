@@ -148,6 +148,7 @@ async function handleCurrencyDetected(message, sender) {
         possibleCurrencies: message.detection.currencies,
         convertedAmount,
         targetCurrency: config.targetCurrency,
+        outputFormat: config.outputFormat,
       }
     });
   } catch (err) {
@@ -156,7 +157,7 @@ async function handleCurrencyDetected(message, sender) {
 }
 
 async function handleRecalculation(message, sender) {
-  const { amount, fromCurrency, targetCurrency, originalSymbol, possibleCurrencies } = message.data;
+  const { amount, fromCurrency, targetCurrency, originalSymbol, possibleCurrencies, outputFormat } = message.data;
 
   const rates = await resolveRates();
   if (!rates) return;
@@ -173,6 +174,7 @@ async function handleRecalculation(message, sender) {
         possibleCurrencies,
         convertedAmount,
         targetCurrency,
+        outputFormat,
       }
     });
   } catch (err) {

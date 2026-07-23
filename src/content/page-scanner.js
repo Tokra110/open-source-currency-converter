@@ -190,7 +190,8 @@ var PageScanner = (() => {
             oldSettings.defaultYenCurrency !== config.defaultYenCurrency ||
             oldSettings.defaultKrCurrency !== config.defaultKrCurrency ||
             oldSettings.defaultFrCurrency !== config.defaultFrCurrency ||
-            oldSettings.numberFormat !== config.numberFormat
+            oldSettings.numberFormat !== config.numberFormat ||
+            oldSettings.outputFormat !== config.outputFormat
         );
 
         settings = config;
@@ -633,17 +634,7 @@ var PageScanner = (() => {
      * Format a currency amount for display.
      */
     function formatAmount(amount, currencyCode) {
-        if (typeof amount !== 'number' || !isFinite(amount)) return String(amount);
-
-        let digits = 2;
-        if (ZERO_DECIMAL_CURRENCIES && ZERO_DECIMAL_CURRENCIES.includes(currencyCode)) {
-            digits = 0;
-        }
-
-        return amount.toLocaleString(undefined, {
-            minimumFractionDigits: digits,
-            maximumFractionDigits: digits,
-        });
+        return formatCurrencyAmount(amount, currencyCode, settings?.outputFormat);
     }
 
     /**

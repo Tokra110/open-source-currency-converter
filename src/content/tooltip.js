@@ -26,24 +26,14 @@ var CurrencyTooltip = (() => {
   /**
    * Format a numeric amount for display.
    */
-  function formatCurrency(amount, currencyCode) {
-    if (typeof amount !== 'number' || !isFinite(amount)) return String(amount);
-
-    let digits = 2;
-    if (currencyCode && ZERO_DECIMAL_CURRENCIES && ZERO_DECIMAL_CURRENCIES.includes(currencyCode)) {
-      digits = 0;
-    }
-
-    return amount.toLocaleString(undefined, {
-      minimumFractionDigits: digits,
-      maximumFractionDigits: digits,
-    });
+  function formatCurrency(amount, currencyCode, outputFormat = 'smart') {
+    return formatCurrencyAmount(amount, currencyCode, outputFormat);
   }
 
   async function copyValue(data) {
     if (!data || !navigator.clipboard?.writeText) return false;
 
-    const formatted = formatCurrency(data.convertedAmount, data.targetCurrency);
+    const formatted = formatCurrency(data.convertedAmount, data.targetCurrency, data.outputFormat);
     try {
       await navigator.clipboard.writeText(`${formatted} ${data.targetCurrency}`);
       return true;
@@ -163,6 +153,7 @@ var CurrencyTooltip = (() => {
             amount: currentData.originalAmount,
             fromCurrency: newCurrency,
             targetCurrency: currentData.targetCurrency,
+            outputFormat: currentData.outputFormat,
             originalSymbol: currentData.originalSymbol,
             possibleCurrencies: currentData.possibleCurrencies,
           }
@@ -214,8 +205,8 @@ var CurrencyTooltip = (() => {
 
     // Update state
     state.data = data;
-    state.formattedAmount = formatCurrency(data.convertedAmount, data.targetCurrency);
-    const originalFormatted = formatCurrency(data.originalAmount, data.originalCurrency);
+    state.formattedAmount = formatCurrency(data.convertedAmount, data.targetCurrency, data.outputFormat);
+    const originalFormatted = formatCurrency(data.originalAmount, data.originalCurrency, data.outputFormat);
 
     const displayText = `${state.formattedAmount} ${escapeHtml(data.targetCurrency)}`;
     const originalText = `${originalFormatted} ${escapeHtml(data.originalCurrency)}`;
@@ -283,7 +274,7 @@ var CurrencyTooltip = (() => {
 
     // Update state
     state.data = data;
-    state.formattedAmount = formatCurrency(data.convertedAmount, data.targetCurrency);
+    state.formattedAmount = formatCurrency(data.convertedAmount, data.targetCurrency, data.outputFormat);
     state.element.setAttribute('aria-label', `Converted: ${state.formattedAmount} ${data.targetCurrency}`);
 
     // Update pills
@@ -302,7 +293,7 @@ var CurrencyTooltip = (() => {
     }
 
     // Update original value
-    const originalFormatted = formatCurrency(data.originalAmount, data.originalCurrency);
+    const originalFormatted = formatCurrency(data.originalAmount, data.originalCurrency, data.outputFormat);
     const originalValueEl = state.element.querySelector('.cc-original-value');
     if (originalValueEl) {
       originalValueEl.textContent = `${originalFormatted} ${data.originalCurrency}`;
