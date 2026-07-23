@@ -43,6 +43,7 @@ var CurrencyDetector = (() => {
   // Matches: 1000, 1,000, 1.000, 1,000.50, 1.000,50, 100.5, 100,5, .99, ,99
   const numberPattern = '(?:\\d{1,3}(?:[.,\\s]\\d{3})+(?:[.,]\\d{1,2})?|\\d+(?:[.,]\\d{1,2})?|[.,]\\d{1,2})';
   const indianNumberPattern = '\\d{1,2}(?:,\\d{2})+,\\d{3}(?:\\.\\d{1,2})?';
+  const swissNumberPattern = "\\d{1,3}(?:['’]\\d{3})+(?:[.,]\\d{1,2})?";
   const signPattern = '[+\\-−]';
   const leftBoundary = `(?<![A-Za-z0-9_.,'’-])`;
   const rightBoundary = `(?![A-Za-z0-9_.,'’-])`;
@@ -66,6 +67,15 @@ var CurrencyDetector = (() => {
   );
   const indianAfterRe = new RegExp(
     `${leftBoundary}(${indianNumberPattern})\\s*${indianTokenPattern}${rightBoundary}`,
+    'ig',
+  );
+  const swissTokenPattern = '(CHF|Fr\\.?|Swiss\\s+francs?|francs?)';
+  const swissBeforeRe = new RegExp(
+    `${leftBoundary}${swissTokenPattern}\\s*(${swissNumberPattern})${rightBoundary}`,
+    'ig',
+  );
+  const swissAfterRe = new RegExp(
+    `${leftBoundary}(${swissNumberPattern})\\s*${swissTokenPattern}${rightBoundary}`,
     'ig',
   );
 
@@ -143,6 +153,10 @@ var CurrencyDetector = (() => {
 
   function parseIndianNumber(numStr) {
     return parseFloat(numStr.replace(/,/g, ''));
+  }
+
+  function parseSwissNumber(numStr) {
+    return parseFloat(numStr.replace(/['’]/g, '').replace(',', '.'));
   }
 
   function isNegativeBySign(signs) {
@@ -279,6 +293,32 @@ var CurrencyDetector = (() => {
     return pickEarlier(beforeResult, afterResult);
   }
 
+  function detectBySwissGrouping(text, startIndex) {
+    const beforeResult = scanRegexForResult(swissBeforeRe, text, startIndex, (match, start, end) => {
+      return buildResult(
+        parseSwissNumber(match[2]),
+        ['CHF'],
+        match[0],
+        match[1],
+        start,
+        end,
+      );
+    });
+
+    const afterResult = scanRegexForResult(swissAfterRe, text, startIndex, (match, start, end) => {
+      return buildResult(
+        parseSwissNumber(match[1]),
+        ['CHF'],
+        match[0],
+        match[2],
+        start,
+        end,
+      );
+    });
+
+    return pickEarlier(beforeResult, afterResult);
+  }
+
   /**
    * Try to detect currency via symbols like "$", "EUR", "£".
    */
@@ -332,8 +372,12 @@ var CurrencyDetector = (() => {
     const isoResult = detectByIsoCode(text, numberFormat, startIndex);
     const symbolResult = detectBySymbol(text, numberFormat, startIndex);
     const indianResult = detectByIndianGrouping(text, startIndex);
+    const swissResult = detectBySwissGrouping(text, startIndex);
 
-    return pickEarlier(pickEarlier(pickEarlier(keywordResult, isoResult), symbolResult), indianResult);
+    return pickEarlier(
+      pickEarlier(pickEarlier(pickEarlier(keywordResult, isoResult), symbolResult), indianResult),
+      swissResult,
+    );
   }
 
   return { detectCurrency, parseNumber };
