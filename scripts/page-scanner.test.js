@@ -50,4 +50,25 @@ assert.strictEqual(
   false,
 );
 
+const firstShadowRoot = { id: 'first' };
+const secondShadowRoot = { id: 'second' };
+const shadowHostTree = {
+  querySelectorAll: () => [
+    { shadowRoot: firstShadowRoot },
+    { shadowRoot: null },
+    { shadowRoot: secondShadowRoot },
+  ],
+};
+assert.strictEqual(
+  JSON.stringify(context.PageScanner.collectOpenShadowRoots(shadowHostTree)),
+  JSON.stringify([firstShadowRoot, secondShadowRoot]),
+);
+assert.strictEqual(
+  JSON.stringify(context.PageScanner.collectOpenShadowRoots({
+    shadowRoot: firstShadowRoot,
+    querySelectorAll: () => [],
+  })),
+  JSON.stringify([firstShadowRoot]),
+);
+
 console.log('page-scanner: all tests passed');
