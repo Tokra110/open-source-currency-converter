@@ -9,7 +9,7 @@ var PageScanner = (() => {
     let settings = null;
     let rates = null;
     let replacementCount = 0;
-    let observer = null;
+    const observers = new Map();
     let isScanning = false;
 
     // Elements to skip when scanning
@@ -23,6 +23,25 @@ var PageScanner = (() => {
     const REPLACED_CLASS = 'cc-auto-replaced';
     const WRAPPER_TAG = 'span';
     const MAX_DETECTIONS_PER_TEXT_NODE = 25;
+    const SHADOW_STYLE_ATTRIBUTE = 'data-cc-shadow-styles';
+    const SHADOW_REPLACEMENT_STYLES = `
+        @keyframes cc-fade-out {
+            from { opacity: 1; transform: translateY(0); }
+            to { opacity: 0; transform: translateY(5px); }
+        }
+        @keyframes cc-fade-in {
+            from { opacity: 0; transform: translateY(-8px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        .cc-fading-out {
+            display: inline-block;
+            animation: cc-fade-out 0.2s ease-in forwards;
+        }
+        .cc-auto-replaced {
+            display: inline-block;
+            animation: cc-fade-in 0.3s ease-out forwards;
+        }
+    `;
 
     // ========================================
     // DEBUG LOGGING INFRASTRUCTURE
@@ -253,10 +272,10 @@ var PageScanner = (() => {
      * Clean up observer and state.
      */
     function cleanup() {
-        if (observer) {
+        for (const observer of observers.values()) {
             observer.disconnect();
-            observer = null;
         }
+        observers.clear();
     }
 
     /**
@@ -323,6 +342,37 @@ var PageScanner = (() => {
         for (const textNode of textNodes) {
             if (replacementCount >= settings.autoReplaceLimit) break;
             processTextNode(textNode);
+        }
+
+        scanOpenShadowRoots(root);
+    }
+
+    function collectOpenShadowRoots(root) {
+        if (!root?.querySelectorAll) return [];
+
+        const shadowRoots = [];
+        if (root.shadowRoot) shadowRoots.push(root.shadowRoot);
+        for (const element of root.querySelectorAll('*')) {
+            if (element.shadowRoot) shadowRoots.push(element.shadowRoot);
+        }
+        return shadowRoots;
+    }
+
+    function ensureShadowStyles(shadowRoot) {
+        if (shadowRoot.querySelector(`style[${SHADOW_STYLE_ATTRIBUTE}]`)) return;
+
+        const style = document.createElement('style');
+        style.setAttribute(SHADOW_STYLE_ATTRIBUTE, '');
+        style.textContent = SHADOW_REPLACEMENT_STYLES;
+        shadowRoot.prepend(style);
+    }
+
+    function scanOpenShadowRoots(root) {
+        for (const shadowRoot of collectOpenShadowRoots(root)) {
+            if (observers.has(shadowRoot)) continue;
+            ensureShadowStyles(shadowRoot);
+            scanNode(shadowRoot);
+            setupMutationObserver(shadowRoot);
         }
     }
 
@@ -415,7 +465,7 @@ var PageScanner = (() => {
      * Process an element that might contain a composite price.
      */
     function processCompositeElement(element) {
-        if (shouldSkipNode({ parentElement: element })) return;
+        if (shouldSkipNode(element)) return;
 
         // Get the combined text content
         const text = element.textContent.trim();
@@ -564,13 +614,13 @@ var PageScanner = (() => {
      * Check if a node should be skipped.
      */
     function shouldSkipNode(node) {
-        let current = node.parentElement;
+        let current = node.tagName ? node : node.parentElement;
         while (current) {
             if (SKIP_TAGS.has(current.tagName)) return true;
             if (current.isContentEditable) return true;
             if (current.classList && current.classList.contains(REPLACED_CLASS)) return true;
             if (current.id === 'currency-converter-tooltip') return true;
-            current = current.parentElement;
+            current = current.parentElement || current.getRootNode?.().host || null;
         }
         return false;
     }
@@ -1007,7 +1057,10 @@ var PageScanner = (() => {
      */
     function restoreAll() {
         debugLog('restoreAll', 'Starting restore of all replaced elements');
-        const elements = document.querySelectorAll(`.${REPLACED_CLASS}`);
+        const observedShadowRoots = Array.from(observers.keys())
+            .filter(root => root !== document.body);
+        const roots = [document, ...observedShadowRoots];
+        const elements = roots.flatMap(root => Array.from(root.querySelectorAll(`.${REPLACED_CLASS}`)));
         debugLog('restoreAll', `Found ${elements.length} elements to restore`);
         elements.forEach(restoreElement);
         replacementCount = 0;
@@ -1017,8 +1070,8 @@ var PageScanner = (() => {
     /**
      * Set up MutationObserver to handle dynamic content.
      */
-    function setupMutationObserver() {
-        if (observer) {
+    function setupMutationObserver(root = document.body) {
+        if (!root || observers.has(root)) {
             debugLog('MutationObserver', 'Observer already exists, skipping setup');
             return;
         }
@@ -1029,7 +1082,7 @@ var PageScanner = (() => {
         let debounceTimer = null;
         let mutationBatchId = 0;
 
-        observer = new MutationObserver((mutations) => {
+        const observer = new MutationObserver((mutations) => {
             if (!isEnabled) return;
             if (replacementCount >= settings.autoReplaceLimit) return;
 
@@ -1161,10 +1214,11 @@ var PageScanner = (() => {
             }, 100);
         });
 
-        observer.observe(document.body, {
+        observer.observe(root, {
             childList: true,
             subtree: true,
         });
+        observers.set(root, observer);
 
         debugLog('MutationObserver', 'Observer now active');
     }
@@ -1185,5 +1239,6 @@ var PageScanner = (() => {
         getReplacementCount,
         shouldSkipNode,
         isSensitiveEmbeddedFrame,
+        collectOpenShadowRoots,
     };
 })();
