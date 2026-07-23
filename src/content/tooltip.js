@@ -40,6 +40,18 @@ var CurrencyTooltip = (() => {
     });
   }
 
+  async function copyValue(data) {
+    if (!data || !navigator.clipboard?.writeText) return false;
+
+    const formatted = formatCurrency(data.convertedAmount, data.targetCurrency);
+    try {
+      await navigator.clipboard.writeText(`${formatted} ${data.targetCurrency}`);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
   /**
    * Build header HTML with currency pills for multi-currency selections.
    */
@@ -120,7 +132,21 @@ var CurrencyTooltip = (() => {
    * Uses event delegation so listeners survive DOM replacements in update().
    */
   function attachDelegatedPillListeners(tooltip) {
-    tooltip.addEventListener('click', (e) => {
+    tooltip.addEventListener('click', async (e) => {
+      const copyButton = e.target.closest('.cc-copy-button');
+      if (copyButton) {
+        e.stopPropagation();
+        const copied = await copyValue(state.data);
+        copyButton.textContent = copied ? 'Copied' : 'Copy failed';
+        copyButton.setAttribute('aria-label', copied ? 'Converted value copied' : 'Could not copy converted value');
+        setTimeout(() => {
+          if (!copyButton.isConnected) return;
+          copyButton.textContent = 'Copy';
+          copyButton.setAttribute('aria-label', 'Copy converted value');
+        }, TIMING.COPY_DISPLAY_MS);
+        return;
+      }
+
       const pill = e.target.closest('.cc-currency-pill');
       if (!pill) return;
       if (pill.classList.contains('active')) return;
@@ -157,7 +183,7 @@ var CurrencyTooltip = (() => {
     });
 
     tooltip.addEventListener('mousedown', (e) => {
-      if (e.target.closest('.cc-currency-pill')) e.stopPropagation();
+      if (e.target.closest('.cc-currency-pill, .cc-copy-button')) e.stopPropagation();
     });
 
     // Keyboard activation for pills (Enter/Space)
@@ -217,6 +243,7 @@ var CurrencyTooltip = (() => {
         <div class="cc-value-container">
           <span class="cc-value">${displayText}</span>
         </div>
+        <button type="button" class="cc-copy-button" aria-label="Copy converted value">Copy</button>
       </div>
     `;
 
@@ -339,5 +366,5 @@ var CurrencyTooltip = (() => {
     return !!state.element;
   }
 
-  return { show, update, remove, isVisible };
+  return { show, update, remove, isVisible, copyValue };
 })();
