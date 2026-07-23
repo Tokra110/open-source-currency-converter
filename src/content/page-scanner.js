@@ -15,7 +15,8 @@ var PageScanner = (() => {
     // Elements to skip when scanning
     const SKIP_TAGS = new Set([
         'SCRIPT', 'STYLE', 'TEXTAREA', 'INPUT', 'CODE', 'PRE',
-        'NOSCRIPT', 'IFRAME', 'OBJECT', 'EMBED', 'SVG', 'CANVAS',
+        'SELECT', 'OPTION', 'NOSCRIPT', 'IFRAME', 'OBJECT', 'EMBED',
+        'SVG', 'CANVAS',
     ]);
 
     // Class used to mark replaced elements
@@ -394,6 +395,8 @@ var PageScanner = (() => {
      * Process an element that might contain a composite price.
      */
     function processCompositeElement(element) {
+        if (shouldSkipNode({ parentElement: element })) return;
+
         // Get the combined text content
         const text = element.textContent.trim();
         if (!text || text.length > 50) return; // Too long to be just a price
@@ -544,6 +547,7 @@ var PageScanner = (() => {
         let current = node.parentElement;
         while (current) {
             if (SKIP_TAGS.has(current.tagName)) return true;
+            if (current.isContentEditable) return true;
             if (current.classList && current.classList.contains(REPLACED_CLASS)) return true;
             if (current.id === 'currency-converter-tooltip') return true;
             current = current.parentElement;
@@ -1159,5 +1163,6 @@ var PageScanner = (() => {
         restoreAll,
         cleanup,
         getReplacementCount,
+        shouldSkipNode,
     };
 })();
