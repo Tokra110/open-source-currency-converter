@@ -26,13 +26,13 @@ var CurrencyTooltip = (() => {
   /**
    * Format a numeric amount for display.
    */
-  function formatCurrency(amount, currencyCode, outputFormat = 'smart') {
-    return formatCurrencyAmount(amount, currencyCode, outputFormat);
+  function formatCurrency(amount, currencyCode, outputFormat = 'smart', compact = null) {
+    return formatCompactCurrencyAmount(amount, currencyCode, compact, outputFormat);
   }
 
-  function formatCurrencyLabel(amount, currencyCode, outputFormat, negativeStyle) {
+  function formatCurrencyLabel(amount, currencyCode, outputFormat, negativeStyle, compact) {
     const value = negativeStyle === 'parentheses' ? Math.abs(amount) : amount;
-    const label = `${formatCurrency(value, currencyCode, outputFormat)} ${currencyCode}`;
+    const label = `${formatCurrency(value, currencyCode, outputFormat, compact)} ${currencyCode}`;
     return negativeStyle === 'parentheses' ? `(${label})` : label;
   }
 
@@ -44,6 +44,7 @@ var CurrencyTooltip = (() => {
       data.targetCurrency,
       data.outputFormat,
       data.negativeStyle,
+      data.compact,
     );
     try {
       await navigator.clipboard.writeText(formatted);
@@ -166,6 +167,7 @@ var CurrencyTooltip = (() => {
             targetCurrency: currentData.targetCurrency,
             outputFormat: currentData.outputFormat,
             negativeStyle: currentData.negativeStyle,
+            compact: currentData.compact,
             originalSymbol: currentData.originalSymbol,
             possibleCurrencies: currentData.possibleCurrencies,
           }
@@ -222,12 +224,14 @@ var CurrencyTooltip = (() => {
       data.targetCurrency,
       data.outputFormat,
       data.negativeStyle,
+      data.compact,
     );
     const originalText = formatCurrencyLabel(
       data.originalAmount,
       data.originalCurrency,
       data.outputFormat,
       data.negativeStyle,
+      data.compact,
     );
     const displayText = escapeHtml(state.formattedAmount);
 
@@ -299,6 +303,7 @@ var CurrencyTooltip = (() => {
       data.targetCurrency,
       data.outputFormat,
       data.negativeStyle,
+      data.compact,
     );
     state.element.setAttribute('aria-label', `Converted: ${state.formattedAmount}`);
 
@@ -323,6 +328,7 @@ var CurrencyTooltip = (() => {
       data.originalCurrency,
       data.outputFormat,
       data.negativeStyle,
+      data.compact,
     );
     const originalValueEl = state.element.querySelector('.cc-original-value');
     if (originalValueEl) {

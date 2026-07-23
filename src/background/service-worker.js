@@ -150,6 +150,7 @@ async function handleCurrencyDetected(message, sender) {
         targetCurrency: config.targetCurrency,
         outputFormat: config.outputFormat,
         negativeStyle: message.detection.negativeStyle,
+        compact: message.detection.compact,
       }
     });
   } catch (err) {
@@ -166,6 +167,7 @@ async function handleRecalculation(message, sender) {
     possibleCurrencies,
     outputFormat,
     negativeStyle,
+    compact,
   } = message.data;
 
   const rates = await resolveRates();
@@ -185,6 +187,7 @@ async function handleRecalculation(message, sender) {
         targetCurrency,
         outputFormat,
         negativeStyle,
+        compact,
       }
     });
   } catch (err) {

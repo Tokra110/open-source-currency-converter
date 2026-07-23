@@ -499,6 +499,7 @@ var PageScanner = (() => {
                 convertedAmount,
                 settings.targetCurrency,
                 detection.negativeStyle,
+                detection.compact,
             );
 
             debugLog('compositeAnimationend', 'About to set innerHTML', {
@@ -636,14 +637,14 @@ var PageScanner = (() => {
     /**
      * Format a currency amount for display.
      */
-    function formatAmount(amount, currencyCode) {
-        return formatCurrencyAmount(amount, currencyCode, settings?.outputFormat);
+    function formatAmount(amount, currencyCode, compact = null) {
+        return formatCompactCurrencyAmount(amount, currencyCode, compact, settings?.outputFormat);
     }
 
-    function formatReplacement(amount, currencyCode, negativeStyle) {
+    function formatReplacement(amount, currencyCode, negativeStyle, compact) {
         const symbol = CURRENCY_CODE_TO_SYMBOL[currencyCode] || currencyCode;
         const value = negativeStyle === 'parentheses' ? Math.abs(amount) : amount;
-        const label = `${formatAmount(value, currencyCode)} ${symbol}`;
+        const label = `${formatAmount(value, currencyCode, compact)} ${symbol}`;
         return negativeStyle === 'parentheses' ? `(${label})` : label;
     }
 
@@ -817,6 +818,7 @@ var PageScanner = (() => {
                 convertedAmount,
                 settings.targetCurrency,
                 detection.negativeStyle,
+                detection.compact,
             );
 
             // Track the new span

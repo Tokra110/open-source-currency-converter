@@ -19,5 +19,9 @@ assert.strictEqual(
   context.formatCurrencyAmount(1234.5, 'USD', 'eu'),
   '1.234,50',
 );
+assert.strictEqual(
+  context.formatCompactCurrencyAmount(1020000, 'EUR', { multiplier: 1000000, label: 'M' }, 'us'),
+  '1.02M',
+);
 
 console.log('formatting: all tests passed');

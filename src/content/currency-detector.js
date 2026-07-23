@@ -39,6 +39,14 @@ var CurrencyDetector = (() => {
   }
 
   const keywordPattern = sortedKeywords.map(escapeRegex).join('|');
+  const compactTokenPattern = [
+    ...sortedSymbols,
+    ...ECB_CURRENCIES,
+    ...sortedKeywords,
+  ]
+    .sort((a, b) => b.length - a.length)
+    .map(escapeRegex)
+    .join('|');
 
   // Matches: 1000, 1,000, 1.000, 1,000.50, 1.000,50, 100.5, 100,5, .99, ,99
   const numberPattern = '(?:\\d{1,3}(?:[.,\\s]\\d{3})+(?:[.,]\\d{1,2})?|\\d+(?:[.,]\\d{1,2})?|[.,]\\d{1,2})';
@@ -76,6 +84,17 @@ var CurrencyDetector = (() => {
   );
   const swissAfterRe = new RegExp(
     `${leftBoundary}(${swissNumberPattern})\\s*${swissTokenPattern}${rightBoundary}`,
+    'ig',
+  );
+  const compactSuffixPattern = '(k|m|b|bn|million|billion)';
+  const compactBeforeRe = new RegExp(
+    `${leftBoundary}(?:(${signPattern})\\s*)?(${compactTokenPattern})\\s*` +
+    `(?:(${signPattern})\\s*)?(${numberPattern})\\s*${compactSuffixPattern}${rightBoundary}`,
+    'ig',
+  );
+  const compactAfterRe = new RegExp(
+    `${leftBoundary}(?:(${signPattern})\\s*)?(${numberPattern})\\s*` +
+    `${compactSuffixPattern}\\s*(${compactTokenPattern})${rightBoundary}`,
     'ig',
   );
 
@@ -157,6 +176,13 @@ var CurrencyDetector = (() => {
 
   function parseSwissNumber(numStr) {
     return parseFloat(numStr.replace(/['’]/g, '').replace(',', '.'));
+  }
+
+  function compactMetadata(rawSuffix) {
+    const suffix = rawSuffix.toLowerCase();
+    if (suffix === 'k') return { multiplier: 1e3, label: 'K' };
+    if (suffix === 'm' || suffix === 'million') return { multiplier: 1e6, label: 'M' };
+    return { multiplier: 1e9, label: 'B' };
   }
 
   function isNegativeBySign(signs) {
@@ -348,6 +374,40 @@ var CurrencyDetector = (() => {
     return pickEarlier(beforeResult, afterResult);
   }
 
+  function detectByCompactAmount(text, numberFormat, startIndex) {
+    const beforeResult = scanRegexForResult(compactBeforeRe, text, startIndex, (match, start, end) => {
+      const currencies = identifyCurrencies(match[2]);
+      const compact = compactMetadata(match[5]);
+      const result = buildResult(
+        parseNumber(match[4], numberFormat) * compact.multiplier,
+        currencies,
+        match[0],
+        match[2],
+        start,
+        end,
+        [match[1], match[3]],
+      );
+      return result ? { ...result, compact } : null;
+    });
+
+    const afterResult = scanRegexForResult(compactAfterRe, text, startIndex, (match, start, end) => {
+      const currencies = identifyCurrencies(match[4]);
+      const compact = compactMetadata(match[3]);
+      const result = buildResult(
+        parseNumber(match[2], numberFormat) * compact.multiplier,
+        currencies,
+        match[0],
+        match[4],
+        start,
+        end,
+        [match[1]],
+      );
+      return result ? { ...result, compact } : null;
+    });
+
+    return pickEarlier(beforeResult, afterResult);
+  }
+
   /**
    * Try to detect currency via symbols like "$", "EUR", "£".
    */
@@ -402,10 +462,14 @@ var CurrencyDetector = (() => {
     const symbolResult = detectBySymbol(text, numberFormat, startIndex);
     const indianResult = detectByIndianGrouping(text, startIndex);
     const swissResult = detectBySwissGrouping(text, startIndex);
+    const compactResult = detectByCompactAmount(text, numberFormat, startIndex);
 
     const result = pickEarlier(
-      pickEarlier(pickEarlier(pickEarlier(keywordResult, isoResult), symbolResult), indianResult),
-      swissResult,
+      pickEarlier(
+        pickEarlier(pickEarlier(pickEarlier(keywordResult, isoResult), symbolResult), indianResult),
+        swissResult,
+      ),
+      compactResult,
     );
     return applyAccountingParentheses(result, text);
   }
