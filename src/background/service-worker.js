@@ -152,7 +152,7 @@ async function handleCurrencyDetected(message, sender) {
         negativeStyle: message.detection.negativeStyle,
         compact: message.detection.compact,
       }
-    });
+    }, { frameId: sender.frameId });
   } catch (err) {
     console.error('[OpenSourceCurrencyConverter] Auto-conversion failed:', err.message);
   }
@@ -189,7 +189,7 @@ async function handleRecalculation(message, sender) {
         negativeStyle,
         compact,
       }
-    });
+    }, { frameId: sender.frameId });
   } catch (err) {
     console.error('[OpenSourceCurrencyConverter] Recalculation failed:', err.message);
   }

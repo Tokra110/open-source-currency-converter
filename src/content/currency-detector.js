@@ -70,20 +70,24 @@ var CurrencyDetector = (() => {
   const isoAfterRe = new RegExp(`${leftBoundary}(?:(${signPattern})\\s*)?(${numberPattern})\\s*([A-Z]{3})${rightBoundary}`, 'ig');
   const indianTokenPattern = '(₹|INR|rupees?)';
   const indianBeforeRe = new RegExp(
-    `${leftBoundary}${indianTokenPattern}\\s*(${indianNumberPattern})${rightBoundary}`,
+    `${leftBoundary}(?:(${signPattern})\\s*)?${indianTokenPattern}\\s*` +
+    `(?:(${signPattern})\\s*)?(${indianNumberPattern})${rightBoundary}`,
     'ig',
   );
   const indianAfterRe = new RegExp(
-    `${leftBoundary}(${indianNumberPattern})\\s*${indianTokenPattern}${rightBoundary}`,
+    `${leftBoundary}(?:(${signPattern})\\s*)?(${indianNumberPattern})\\s*` +
+    `${indianTokenPattern}${rightBoundary}`,
     'ig',
   );
   const swissTokenPattern = '(CHF|Fr\\.?|Swiss\\s+francs?|francs?)';
   const swissBeforeRe = new RegExp(
-    `${leftBoundary}${swissTokenPattern}\\s*(${swissNumberPattern})${rightBoundary}`,
+    `${leftBoundary}(?:(${signPattern})\\s*)?${swissTokenPattern}\\s*` +
+    `(?:(${signPattern})\\s*)?(${swissNumberPattern})${rightBoundary}`,
     'ig',
   );
   const swissAfterRe = new RegExp(
-    `${leftBoundary}(${swissNumberPattern})\\s*${swissTokenPattern}${rightBoundary}`,
+    `${leftBoundary}(?:(${signPattern})\\s*)?(${swissNumberPattern})\\s*` +
+    `${swissTokenPattern}${rightBoundary}`,
     'ig',
   );
   const compactSuffixPattern = '(k|m|b|bn|million|billion)';
@@ -322,7 +326,20 @@ var CurrencyDetector = (() => {
 
   function detectByIndianGrouping(text, startIndex) {
     const beforeResult = scanRegexForResult(indianBeforeRe, text, startIndex, (match, start, end) => {
-      const token = match[1];
+      const token = match[2];
+      return buildResult(
+        parseIndianNumber(match[4]),
+        ['INR'],
+        match[0],
+        token,
+        start,
+        end,
+        [match[1], match[3]],
+      );
+    });
+
+    const afterResult = scanRegexForResult(indianAfterRe, text, startIndex, (match, start, end) => {
+      const token = match[3];
       return buildResult(
         parseIndianNumber(match[2]),
         ['INR'],
@@ -330,18 +347,7 @@ var CurrencyDetector = (() => {
         token,
         start,
         end,
-      );
-    });
-
-    const afterResult = scanRegexForResult(indianAfterRe, text, startIndex, (match, start, end) => {
-      const token = match[2];
-      return buildResult(
-        parseIndianNumber(match[1]),
-        ['INR'],
-        match[0],
-        token,
-        start,
-        end,
+        [match[1]],
       );
     });
 
@@ -351,23 +357,25 @@ var CurrencyDetector = (() => {
   function detectBySwissGrouping(text, startIndex) {
     const beforeResult = scanRegexForResult(swissBeforeRe, text, startIndex, (match, start, end) => {
       return buildResult(
-        parseSwissNumber(match[2]),
-        ['CHF'],
-        match[0],
-        match[1],
-        start,
-        end,
-      );
-    });
-
-    const afterResult = scanRegexForResult(swissAfterRe, text, startIndex, (match, start, end) => {
-      return buildResult(
-        parseSwissNumber(match[1]),
+        parseSwissNumber(match[4]),
         ['CHF'],
         match[0],
         match[2],
         start,
         end,
+        [match[1], match[3]],
+      );
+    });
+
+    const afterResult = scanRegexForResult(swissAfterRe, text, startIndex, (match, start, end) => {
+      return buildResult(
+        parseSwissNumber(match[2]),
+        ['CHF'],
+        match[0],
+        match[3],
+        start,
+        end,
+        [match[1]],
       );
     });
 
