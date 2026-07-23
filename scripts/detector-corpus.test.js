@@ -86,6 +86,21 @@ function run() {
   assert(d && d.amount === -20 && d.negativeStyle === 'parentheses');
   assert.strictEqual(d.original, '($20.00)');
 
+  // Compact suffixes require an explicit currency and expand before conversion.
+  const compactSamples = [
+    ['$1.2M', 1200000, 'M'],
+    ['€850K', 850000, 'K'],
+    ['JPY 2.4 billion', 2400000000, 'B'],
+    ['£3bn', 3000000000, 'B'],
+  ];
+  for (const [sample, amount, label] of compactSamples) {
+    d = detector.detectCurrency(sample, 'auto', { maxLength: 200 });
+    assert(d && d.amount === amount);
+    assert(d.compact && d.compact.label === label);
+    assert.strictEqual(d.original, sample);
+  }
+  assert.strictEqual(detector.detectCurrency('The cable is 1.2m long', 'auto', { maxLength: 200 }), null);
+
   // Boundary hardening: avoid IDs/version tokens.
   assert.strictEqual(detector.detectCurrency('R2D2', 'auto', { maxLength: 200 }), null);
   assert.strictEqual(detector.detectCurrency('v1.0USD', 'auto', { maxLength: 200 }), null);

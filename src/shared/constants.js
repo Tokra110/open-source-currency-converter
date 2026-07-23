@@ -174,6 +174,20 @@ function formatCurrencyAmount(amount, currencyCode, outputFormat = 'smart', brow
   }).format(amount);
 }
 
+function formatCompactCurrencyAmount(amount, currencyCode, compact, outputFormat = 'smart', browserLocale) {
+  if (!compact?.multiplier || !compact.label) {
+    return formatCurrencyAmount(amount, currencyCode, outputFormat, browserLocale);
+  }
+
+  const locale = resolveOutputLocale(outputFormat, browserLocale);
+  const scaledAmount = amount / compact.multiplier;
+  const formatted = new Intl.NumberFormat(locale, {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 2,
+  }).format(scaledAmount);
+  return `${formatted}${compact.label}`;
+}
+
 
 var TIMING = {
   DEBOUNCE_MS: 300,
