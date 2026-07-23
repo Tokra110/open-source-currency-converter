@@ -42,9 +42,10 @@ var CurrencyDetector = (() => {
 
   // Matches: 1000, 1,000, 1.000, 1,000.50, 1.000,50, 100.5, 100,5, .99, ,99
   const numberPattern = '(?:\\d{1,3}(?:[.,\\s]\\d{3})+(?:[.,]\\d{1,2})?|\\d+(?:[.,]\\d{1,2})?|[.,]\\d{1,2})';
+  const indianNumberPattern = '\\d{1,2}(?:,\\d{2})+,\\d{3}(?:\\.\\d{1,2})?';
   const signPattern = '[+\\-−]';
-  const leftBoundary = '(?<![A-Za-z0-9_.-])';
-  const rightBoundary = '(?![A-Za-z0-9_.-])';
+  const leftBoundary = `(?<![A-Za-z0-9_.,'’-])`;
+  const rightBoundary = `(?![A-Za-z0-9_.,'’-])`;
 
   const isoCodesSet = new Set(ECB_CURRENCIES);
 
@@ -58,6 +59,15 @@ var CurrencyDetector = (() => {
 
   const isoBeforeRe = new RegExp(`${leftBoundary}([A-Z]{3})\\s*(?:(${signPattern})\\s*)?(${numberPattern})${rightBoundary}`, 'ig');
   const isoAfterRe = new RegExp(`${leftBoundary}(?:(${signPattern})\\s*)?(${numberPattern})\\s*([A-Z]{3})${rightBoundary}`, 'ig');
+  const indianTokenPattern = '(₹|INR|rupees?)';
+  const indianBeforeRe = new RegExp(
+    `${leftBoundary}${indianTokenPattern}\\s*(${indianNumberPattern})${rightBoundary}`,
+    'ig',
+  );
+  const indianAfterRe = new RegExp(
+    `${leftBoundary}(${indianNumberPattern})\\s*${indianTokenPattern}${rightBoundary}`,
+    'ig',
+  );
 
   // Symbol regexes with negative lookbehind to prevent matching inside words (e.g., GDDR6)
   // (?<![A-Za-z0-9]) ensures the symbol is not preceded by alphanumeric characters
@@ -129,6 +139,10 @@ var CurrencyDetector = (() => {
 
   function isNegativeSign(sign) {
     return sign === '-' || sign === '−';
+  }
+
+  function parseIndianNumber(numStr) {
+    return parseFloat(numStr.replace(/,/g, ''));
   }
 
   function isNegativeBySign(signs) {
@@ -237,6 +251,34 @@ var CurrencyDetector = (() => {
     return pickEarlier(beforeResult, afterResult);
   }
 
+  function detectByIndianGrouping(text, startIndex) {
+    const beforeResult = scanRegexForResult(indianBeforeRe, text, startIndex, (match, start, end) => {
+      const token = match[1];
+      return buildResult(
+        parseIndianNumber(match[2]),
+        ['INR'],
+        match[0],
+        token,
+        start,
+        end,
+      );
+    });
+
+    const afterResult = scanRegexForResult(indianAfterRe, text, startIndex, (match, start, end) => {
+      const token = match[2];
+      return buildResult(
+        parseIndianNumber(match[1]),
+        ['INR'],
+        match[0],
+        token,
+        start,
+        end,
+      );
+    });
+
+    return pickEarlier(beforeResult, afterResult);
+  }
+
   /**
    * Try to detect currency via symbols like "$", "EUR", "£".
    */
@@ -289,8 +331,9 @@ var CurrencyDetector = (() => {
     const keywordResult = detectByKeyword(text, numberFormat, startIndex);
     const isoResult = detectByIsoCode(text, numberFormat, startIndex);
     const symbolResult = detectBySymbol(text, numberFormat, startIndex);
+    const indianResult = detectByIndianGrouping(text, startIndex);
 
-    return pickEarlier(pickEarlier(keywordResult, isoResult), symbolResult);
+    return pickEarlier(pickEarlier(pickEarlier(keywordResult, isoResult), symbolResult), indianResult);
   }
 
   return { detectCurrency, parseNumber };
