@@ -6,6 +6,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     const modeAuto = document.getElementById('modeAuto');
     const modeInteractive = document.getElementById('modeInteractive');
     const targetCurrency = document.getElementById('targetCurrency');
+    const currencySearch = document.getElementById('currencySearch');
     const defaultDollarCurrency = document.getElementById('defaultDollarCurrency');
     const defaultYenCurrency = document.getElementById('defaultYenCurrency');
     const defaultKrCurrency = document.getElementById('defaultKrCurrency');
@@ -22,12 +23,11 @@ document.addEventListener('DOMContentLoaded', async () => {
     const siteStatusDot = document.getElementById('siteStatusDot');
     const siteToggleBtn = document.getElementById('siteToggleBtn');
 
-    // Populate Currencies
-    populateCurrencyDropdown(targetCurrency);
-
     // Load Settings
     const data = await chrome.storage.sync.get(STORAGE_KEYS.SETTINGS);
     const settings = { ...DEFAULT_SETTINGS, ...data[STORAGE_KEYS.SETTINGS] };
+    let selectedTargetCurrency = settings.targetCurrency;
+    populateCurrencyDropdown(targetCurrency, '', selectedTargetCurrency);
 
     // Apply UI State
     extensionEnabled.checked = settings.extensionEnabled;
@@ -74,7 +74,16 @@ document.addEventListener('DOMContentLoaded', async () => {
     });
 
     // 3. Dropdowns
-    targetCurrency.addEventListener('change', (e) => saveSetting('targetCurrency', e.target.value));
+    targetCurrency.addEventListener('change', (e) => {
+        if (!e.target.value) return;
+        selectedTargetCurrency = e.target.value;
+        saveSetting('targetCurrency', selectedTargetCurrency);
+        currencySearch.value = '';
+        populateCurrencyDropdown(targetCurrency, '', selectedTargetCurrency);
+    });
+    currencySearch.addEventListener('input', (e) => {
+        populateCurrencyDropdown(targetCurrency, e.target.value, selectedTargetCurrency);
+    });
     defaultDollarCurrency.addEventListener('change', (e) => saveSetting('defaultDollarCurrency', e.target.value));
     defaultYenCurrency.addEventListener('change', (e) => saveSetting('defaultYenCurrency', e.target.value));
     defaultKrCurrency.addEventListener('change', (e) => saveSetting('defaultKrCurrency', e.target.value));
@@ -138,20 +147,31 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
     }
 
-    function populateCurrencyDropdown(select) {
-        // CURRENCIES is likely undefined if not imported. 
-        // We need to make sure constants.js exports it or it's globally available.
-        // Assuming constants.js declares 'const CURRENCIES = ...' in global scope like the service worker uses.
+    function populateCurrencyDropdown(select, query, selectedCode) {
+        const codes = filterCurrencyCodes(query);
+        select.textContent = '';
 
-        // Sorting alphabetically by code
-        const sorted = Object.keys(CURRENCY_NAMES).sort();
+        if (!codes.includes(selectedCode)) {
+            const placeholder = document.createElement('option');
+            placeholder.value = '';
+            placeholder.disabled = true;
+            placeholder.selected = true;
+            placeholder.textContent = codes.length
+                ? `Select from ${codes.length} matches`
+                : 'No matching currencies';
+            select.appendChild(placeholder);
+        }
 
-        sorted.forEach(code => {
+        codes.forEach(code => {
             const option = document.createElement('option');
             option.value = code;
             option.textContent = `${code} - ${CURRENCY_NAMES[code]}`;
             select.appendChild(option);
         });
+
+        if (codes.includes(selectedCode)) {
+            select.value = selectedCode;
+        }
     }
 
     function updateLastSyncedTime(timestamp) {

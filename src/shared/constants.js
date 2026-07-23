@@ -116,6 +116,17 @@ var CURRENCY_NAMES = {
   ZAR: 'South African rand',
 };
 
+function filterCurrencyCodes(query, currencyNames = CURRENCY_NAMES) {
+  const normalizedQuery = String(query || '').trim().toLowerCase();
+  return Object.keys(currencyNames)
+    .filter((code) => {
+      if (!normalizedQuery) return true;
+      return code.toLowerCase().includes(normalizedQuery) ||
+        currencyNames[code].toLowerCase().includes(normalizedQuery);
+    })
+    .sort();
+}
+
 var CURRENCY_CODE_TO_SYMBOL = {
   USD: '$',
   EUR: '€',
