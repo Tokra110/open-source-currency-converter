@@ -10,7 +10,11 @@ var PageScanner = (() => {
     let rates = null;
     let replacementCount = 0;
     const observers = new Map();
-    let isScanning = false;
+    const scannerCreatedNodes = new WeakSet();
+    let scanWork = [];
+    let scheduledScanWork = null;
+    let scanStartedAt = 0;
+    let contextFragmentCache = null;
 
     // Elements to skip when scanning
     const SKIP_TAGS = new Set([
@@ -23,6 +27,19 @@ var PageScanner = (() => {
     const REPLACED_CLASS = 'cc-auto-replaced';
     const WRAPPER_TAG = 'span';
     const MAX_DETECTIONS_PER_TEXT_NODE = 25;
+    const MAX_CONTEXT_ANCESTORS = 12;
+    const MAX_CONTEXT_TEXT_LENGTH = 2000;
+    const MAX_CONTEXT_DETECTIONS = 50;
+    const MAX_SCAN_ITEMS_PER_CHUNK = 150;
+    const MIN_SCAN_ITEMS_PER_CHUNK = 20;
+    const SCAN_IDLE_TIMEOUT_MS = 250;
+    const MUTATION_DEBOUNCE_MS = 100;
+    const MUTATION_MAX_WAIT_MS = 500;
+    const COMPOSITE_SELECTOR = '[class*="price"], [class*="Price"], [data-price], [itemprop="price"]';
+    const CONTEXT_AMBIGUOUS_TOKENS = new Set([
+        '$', 'dollar', 'dollars', 'buck', 'bucks', 'greenback', 'greenbacks',
+        '¥', 'kr', 'fr',
+    ]);
     const SHADOW_STYLE_ATTRIBUTE = 'data-cc-shadow-styles';
     const SHADOW_REPLACEMENT_STYLES = `
         @keyframes cc-fade-out {
@@ -40,6 +57,9 @@ var PageScanner = (() => {
         .cc-auto-replaced {
             display: inline-block;
             animation: cc-fade-in 0.3s ease-out forwards;
+        }
+        .cc-auto-replaced.cc-no-animation {
+            animation: none;
         }
     `;
 
@@ -59,6 +79,26 @@ var PageScanner = (() => {
         const timestamp = performance.now().toFixed(2);
         console.log(`${LOG_PREFIX} [${timestamp}ms] [Op#${opId}] [${category}]`, message, data);
         return opId;
+    }
+
+    function createDebugData(factory, enabled = DEBUG_MODE) {
+        return enabled ? factory() : undefined;
+    }
+
+    function isNodeConnected(node) {
+        return !!node?.isConnected;
+    }
+
+    function shouldAnimate(config = settings) {
+        return !config?.disableAnimations;
+    }
+
+    function onAnimationOrNow(element, callback, config = settings) {
+        if (!shouldAnimate(config)) {
+            callback();
+            return;
+        }
+        element.addEventListener('animationend', callback, { once: true });
     }
 
     function debugWarn(category, message, data = {}) {
@@ -82,7 +122,7 @@ var PageScanner = (() => {
             exists: true,
             nodeType: node.nodeType,
             nodeName: node.nodeName,
-            inDocument: document.contains(node),
+            inDocument: isNodeConnected(node),
             hasParent: !!node.parentNode,
         };
 
@@ -116,10 +156,11 @@ var PageScanner = (() => {
      * Safe DOM operation wrapper with detailed error logging.
      * @param {string} operation - Name of the operation
      * @param {Function} fn - The DOM operation to perform
-     * @param {Object} context - Context info for logging
+     * @param {Function} contextFactory - Creates context info only when needed
      * @returns {boolean} Success status
      */
-    function safeDOMOperation(operation, fn, context = {}) {
+    function safeDOMOperation(operation, fn, contextFactory = () => ({})) {
+        let context = createDebugData(contextFactory);
         const opId = debugLog('DOM-OP', `Starting: ${operation}`, context);
 
         try {
@@ -127,6 +168,7 @@ var PageScanner = (() => {
             debugLog('DOM-OP', `Completed: ${operation}`, { opId });
             return true;
         } catch (error) {
+            context = context || contextFactory();
             debugError('DOM-OP', `Failed: ${operation}`, error, {
                 opId,
                 errorName: error.name,
@@ -160,6 +202,101 @@ var PageScanner = (() => {
             stack: new Error().stack,
         });
     }
+
+    function drainScanWork(
+        queue,
+        processItem,
+        deadline,
+        maxItems = MAX_SCAN_ITEMS_PER_CHUNK,
+    ) {
+        let processed = 0;
+        while (
+            processed < queue.length &&
+            processed < maxItems &&
+            (
+                processed < MIN_SCAN_ITEMS_PER_CHUNK ||
+                !deadline?.timeRemaining ||
+                deadline.timeRemaining() > 1
+            )
+        ) {
+            processItem(queue[processed]);
+            processed++;
+        }
+        if (processed > 0) queue.splice(0, processed);
+        return queue.length;
+    }
+
+    function drainDomTraversal(
+        traversal,
+        visitNode,
+        deadline,
+        maxItems = MAX_SCAN_ITEMS_PER_CHUNK,
+    ) {
+        let processed = 0;
+
+        while (
+            processed < maxItems &&
+            (
+                processed < MIN_SCAN_ITEMS_PER_CHUNK ||
+                !deadline?.timeRemaining ||
+                deadline.timeRemaining() > 1
+            )
+        ) {
+            let node = null;
+            if (traversal.rootPending) {
+                traversal.rootPending = false;
+                node = traversal.root;
+            } else {
+                node = traversal.walker?.nextNode() || null;
+            }
+
+            if (!node) {
+                return { processed, done: true };
+            }
+
+            visitNode(node);
+            processed++;
+        }
+
+        return { processed, done: false };
+    }
+
+    function scheduleIdleWork(callback) {
+        if (typeof requestIdleCallback === 'function') {
+            return {
+                type: 'idle',
+                id: requestIdleCallback(callback, { timeout: SCAN_IDLE_TIMEOUT_MS }),
+            };
+        }
+
+        return {
+            type: 'timeout',
+            id: setTimeout(() => callback({ timeRemaining: () => 8 }), 0),
+        };
+    }
+
+    function cancelIdleWork(handle) {
+        if (!handle) return;
+        if (handle.type === 'idle' && typeof cancelIdleCallback === 'function') {
+            cancelIdleCallback(handle.id);
+            return;
+        }
+        clearTimeout(handle.id);
+    }
+
+    function compactPendingNodes(nodes) {
+        const uniqueNodes = Array.from(new Set(nodes));
+        const queuedNodes = new Set(uniqueNodes);
+
+        return uniqueNodes.filter((node) => {
+            let ancestor = node?.parentNode || null;
+            while (ancestor) {
+                if (queuedNodes.has(ancestor)) return false;
+                ancestor = ancestor.parentNode || ancestor.getRootNode?.().host || null;
+            }
+            return true;
+        });
+    }
     // ========================================
 
     /**
@@ -168,14 +305,14 @@ var PageScanner = (() => {
      * @param {Object} ratesData - Exchange rates map
      */
     function init(config, ratesData) {
-        debugLog('init', 'Initializing page scanner', {
-            hostname: window.location.hostname,
+        debugLog('init', 'Initializing page scanner', createDebugData(() => ({
+            hostname: getSiteHostname(window.location),
             pathname: window.location.pathname,
             targetCurrency: config.targetCurrency,
             conversionMode: config.conversionMode,
             extensionEnabled: config.extensionEnabled,
             ratesCount: ratesData ? Object.keys(ratesData).length : 0,
-        });
+        })));
 
         settings = config;
         rates = ratesData;
@@ -211,7 +348,8 @@ var PageScanner = (() => {
             oldSettings.defaultKrCurrency !== config.defaultKrCurrency ||
             oldSettings.defaultFrCurrency !== config.defaultFrCurrency ||
             oldSettings.numberFormat !== config.numberFormat ||
-            oldSettings.outputFormat !== config.outputFormat
+            oldSettings.outputFormat !== config.outputFormat ||
+            oldSettings.disableAnimations !== config.disableAnimations
         );
 
         settings = config;
@@ -232,7 +370,7 @@ var PageScanner = (() => {
             restoreAll();
             replacementCount = 0;
             scanPage();
-            // Observer remains connected but will use new settings
+            setupMutationObserver();
         }
     }
 
@@ -243,7 +381,7 @@ var PageScanner = (() => {
         if (isSensitiveEmbeddedFrame(document, window)) return false;
 
         // Check if current site is disabled
-        if (config.disabledDomains && config.disabledDomains.includes(window.location.hostname)) {
+        if (config.disabledDomains && config.disabledDomains.includes(getSiteHostname(window.location))) {
             return false;
         }
 
@@ -272,8 +410,12 @@ var PageScanner = (() => {
      * Clean up observer and state.
      */
     function cleanup() {
-        for (const observer of observers.values()) {
-            observer.disconnect();
+        cancelIdleWork(scheduledScanWork);
+        scheduledScanWork = null;
+        scanWork = [];
+        contextFragmentCache = null;
+        for (const state of observers.values()) {
+            state.observer.disconnect();
         }
         observers.clear();
     }
@@ -282,29 +424,21 @@ var PageScanner = (() => {
      * Scan the entire page for currency amounts.
      */
     function scanPage() {
-        if (!isEnabled || !rates || isScanning) {
-            debugLog('scanPage', 'Skipping scan', { isEnabled, hasRates: !!rates, isScanning });
+        if (!isEnabled || !rates) {
+            debugLog('scanPage', 'Skipping scan', { isEnabled, hasRates: !!rates });
             return;
         }
 
-        debugLog('scanPage', 'Starting full page scan', {
+        debugLog('scanPage', 'Starting full page scan', createDebugData(() => ({
             bodyChildren: document.body?.childElementCount,
             limit: settings?.autoReplaceLimit,
-        });
+        })));
 
-        isScanning = true;
-        const startTime = performance.now();
-
-        try {
-            scanNode(document.body);
-        } finally {
-            isScanning = false;
-            const elapsed = (performance.now() - startTime).toFixed(2);
-            debugLog('scanPage', 'Page scan complete', {
-                elapsed: `${elapsed}ms`,
-                replacementCount,
-            });
-        }
+        cancelIdleWork(scheduledScanWork);
+        scheduledScanWork = null;
+        scanWork = [];
+        scanStartedAt = DEBUG_MODE ? performance.now() : 0;
+        scanNode(document.body);
     }
 
     /**
@@ -315,36 +449,113 @@ var PageScanner = (() => {
     function scanNode(root) {
         if (!root || replacementCount >= settings.autoReplaceLimit) return;
 
-        // First, scan for composite price elements (e.g., Amazon's split price spans)
-        scanCompositeElements(root);
-
-        // Then scan individual text nodes for simple cases
-        const walker = document.createTreeWalker(
+        const walker = root.nodeType === Node.TEXT_NODE
+            ? null
+            : document.createTreeWalker(
+                root,
+                NodeFilter.SHOW_ELEMENT | NodeFilter.SHOW_TEXT,
+            );
+        scanWork.push({
             root,
-            NodeFilter.SHOW_TEXT,
-            {
-                acceptNode: (node) => {
-                    if (!node.textContent.trim()) return NodeFilter.FILTER_REJECT;
-                    if (shouldSkipNode(node)) return NodeFilter.FILTER_REJECT;
-                    return NodeFilter.FILTER_ACCEPT;
+            rootPending: true,
+            walker,
+        });
+        scheduleScanQueue();
+    }
+
+    function queueScanRoot(root) {
+        scanNode(root);
+    }
+
+    function scheduleScanQueue() {
+        if (scheduledScanWork || scanWork.length === 0 || !isEnabled) return;
+        scheduledScanWork = scheduleIdleWork(processScanQueue);
+    }
+
+    function processDiscoveredNode(node) {
+        if (
+            !isEnabled ||
+            replacementCount >= settings.autoReplaceLimit ||
+            node?.isConnected === false
+        ) {
+            return;
+        }
+
+        if (node.nodeType === Node.TEXT_NODE) {
+            if (node.textContent.trim() && !shouldSkipNode(node)) {
+                processTextNode(node);
+            }
+            return;
+        }
+
+        if (node.nodeType !== Node.ELEMENT_NODE) return;
+
+        if (node.matches?.(COMPOSITE_SELECTOR)) {
+            processCompositeElement(node);
+        }
+
+        if (node.shadowRoot) {
+            ensureShadowStyles(node.shadowRoot);
+            scanNode(node.shadowRoot);
+            setupMutationObserver(node.shadowRoot);
+        }
+    }
+
+    function processScanQueue(deadline) {
+        scheduledScanWork = null;
+        contextFragmentCache = new WeakMap();
+        let processed = 0;
+
+        while (
+            scanWork.length > 0 &&
+            processed < MAX_SCAN_ITEMS_PER_CHUNK &&
+            (
+                processed < MIN_SCAN_ITEMS_PER_CHUNK ||
+                !deadline?.timeRemaining ||
+                deadline.timeRemaining() > 1
+            )
+        ) {
+            const remainingLimit = MAX_SCAN_ITEMS_PER_CHUNK - processed;
+            const result = drainDomTraversal(
+                scanWork[0],
+                processDiscoveredNode,
+                deadline,
+                remainingLimit,
+            );
+            processed += result.processed;
+
+            if (result.done) {
+                scanWork.shift();
+                continue;
+            }
+            break;
+        }
+
+        contextFragmentCache = null;
+
+        if (!isEnabled || replacementCount >= settings.autoReplaceLimit) {
+            scanWork = [];
+            if (replacementCount >= settings.autoReplaceLimit) {
+                for (const state of observers.values()) {
+                    state.observer.disconnect();
+                    state.active = false;
                 }
             }
-        );
-
-        // Collect nodes first to avoid modifying DOM during traversal
-        const textNodes = [];
-        let node;
-        while ((node = walker.nextNode())) {
-            textNodes.push(node);
+            return;
         }
 
-        // Process collected nodes
-        for (const textNode of textNodes) {
-            if (replacementCount >= settings.autoReplaceLimit) break;
-            processTextNode(textNode);
+        if (scanWork.length > 0) {
+            scheduleScanQueue();
+            return;
         }
 
-        scanOpenShadowRoots(root);
+        if (scanStartedAt) {
+            debugLog('scanPage', 'Page scan complete', createDebugData(() => ({
+                elapsed: `${(performance.now() - scanStartedAt).toFixed(2)}ms`,
+                replacementCount,
+            })));
+            scanStartedAt = 0;
+        }
     }
 
     function collectOpenShadowRoots(root) {
@@ -369,7 +580,6 @@ var PageScanner = (() => {
 
     function scanOpenShadowRoots(root) {
         for (const shadowRoot of collectOpenShadowRoots(root)) {
-            if (observers.has(shadowRoot)) continue;
             ensureShadowStyles(shadowRoot);
             scanNode(shadowRoot);
             setupMutationObserver(shadowRoot);
@@ -380,18 +590,20 @@ var PageScanner = (() => {
      * Scan for composite price elements where the price is split across child elements.
      * Common on Amazon, eBay, etc. where "$29.99" becomes multiple spans.
      */
-    function scanCompositeElements(root) {
+    function collectCompositeElements(root) {
+        if (!root?.querySelectorAll) return [];
+
         // Look for elements that might contain composite prices
         // These are typically small elements with few children containing a combined price
         const candidates = root.querySelectorAll('[class*="price"], [class*="Price"], [data-price], [itemprop="price"]');
 
-        debugLog('scanCompositeElements', 'Found price candidates', {
+        debugLog('scanCompositeElements', 'Found price candidates', createDebugData(() => ({
             count: candidates.length,
             rootInfo: getNodeDebugInfo(root),
-        });
+        })));
 
-        let processedCount = 0;
         let skippedCount = 0;
+        const elementsToProcess = [];
 
         // Track elements we'll process in this batch to skip their descendants
         // This prevents React conflicts by only modifying outermost containers
@@ -399,7 +611,10 @@ var PageScanner = (() => {
 
         for (const el of candidates) {
             if (replacementCount >= settings.autoReplaceLimit) {
-                debugLog('scanCompositeElements', 'Reached limit', { processedCount, skippedCount });
+                debugLog('scanCompositeElements', 'Reached limit', {
+                    processedCount: elementsToProcess.length,
+                    skippedCount,
+                });
                 break;
             }
             if (el.classList && el.classList.contains(REPLACED_CLASS)) {
@@ -450,15 +665,15 @@ var PageScanner = (() => {
 
             // Mark this element as being processed before we actually process it
             processedInBatch.add(el);
-            processCompositeElement(el);
-            processedCount++;
+            elementsToProcess.push(el);
         }
 
         debugLog('scanCompositeElements', 'Composite scan complete', {
-            processedCount,
+            processedCount: elementsToProcess.length,
             skippedCount,
             currentReplacementCount: replacementCount,
         });
+        return elementsToProcess;
     }
 
     /**
@@ -477,8 +692,16 @@ var PageScanner = (() => {
         });
         if (!detection) return;
 
-        // Resolve ambiguous currencies
-        const fromCurrency = chooseDetectedCurrency(detection, settings);
+        const contextResult = detection.currencies.length > 1
+            ? findScopedCurrencyContext(
+                element,
+                detection,
+                settings.numberFormat,
+                collectContextTextFragments,
+                contextFragmentCache,
+            )
+            : null;
+        const fromCurrency = resolveDetectedCurrency(detection, settings, contextResult);
         if (!fromCurrency) return;
 
         if (fromCurrency === settings.targetCurrency) return;
@@ -505,12 +728,12 @@ var PageScanner = (() => {
      * Replace a composite element's content with converted value.
      */
     function replaceCompositeElement(element, detection, fromCurrency, convertedAmount) {
-        const compositeOpId = debugLog('replaceCompositeElement', 'Starting composite replacement', {
+        const compositeOpId = debugLog('replaceCompositeElement', 'Starting composite replacement', createDebugData(() => ({
             elementInfo: getNodeDebugInfo(element),
             detection: detection.original,
             fromCurrency,
             convertedAmount,
-        });
+        })));
 
         const fullOriginal = element.textContent.trim();
         const originalRect = element.getBoundingClientRect();
@@ -522,35 +745,37 @@ var PageScanner = (() => {
         // Track element for debugging
         registerElement(element, 'composite-fading-out');
 
-        element.classList.add('cc-fading-out');
+        if (shouldAnimate()) {
+            element.classList.add('cc-fading-out');
+        }
 
-        debugLog('replaceCompositeElement', 'Starting animation', {
+        debugLog('replaceCompositeElement', 'Starting animation', createDebugData(() => ({
             compositeOpId,
             originalHTML: originalHTML.substring(0, 100),
             originalWidth,
-        });
+        })));
 
-        element.addEventListener('animationend', () => {
-            debugLog('compositeAnimationend', 'Animation ended, starting content swap', {
+        onAnimationOrNow(element, () => {
+            debugLog('compositeAnimationend', 'Animation ended, starting content swap', createDebugData(() => ({
                 compositeOpId,
                 elementInfo: getNodeDebugInfo(element),
-                inDocument: document.contains(element),
+                inDocument: isNodeConnected(element),
                 hasParent: !!element.parentNode,
-            });
+            })));
 
             // Guard: element may have been removed during animation
             if (!element.parentNode) {
                 debugWarn('compositeAnimationend', 'Element has no parent, aborting', {
                     compositeOpId,
                     elementInfo: getNodeDebugInfo(element),
-                    inDocument: document.contains(element),
+                    inDocument: isNodeConnected(element),
                     possibleCause: 'React likely re-rendered this component during animation',
                 });
                 return;
             }
 
             // Additional check: is the element still in the document?
-            if (!document.contains(element)) {
+            if (!isNodeConnected(element)) {
                 debugWarn('compositeAnimationend', 'Element is no longer in document', {
                     compositeOpId,
                     elementInfo: getNodeDebugInfo(element),
@@ -562,10 +787,13 @@ var PageScanner = (() => {
 
             element.classList.remove('cc-fading-out');
             element.classList.add(REPLACED_CLASS);
+            if (!shouldAnimate()) {
+                element.classList.add('cc-no-animation');
+            }
             element.dataset.original = fullOriginal;
             element.dataset.originalHtml = originalHTML;
             element.dataset.fromCurrency = fromCurrency;
-            element.title = `Original: ${fullOriginal}`;
+            element.title = formatOriginalTitle(fullOriginal, fromCurrency);
 
             // Standard horizontal layout
             const newContent = formatReplacement(
@@ -575,22 +803,22 @@ var PageScanner = (() => {
                 detection.compact,
             );
 
-            debugLog('compositeAnimationend', 'About to set innerHTML', {
+            debugLog('compositeAnimationend', 'About to set innerHTML', createDebugData(() => ({
                 compositeOpId,
                 newContent,
                 currentInnerHTML: element.innerHTML?.substring(0, 50),
-            });
+            })));
 
             // THIS IS A CRITICAL POINT - modifying innerHTML can conflict with React
             const setContentSuccess = safeDOMOperation(
                 'innerHTML modification',
                 () => { element.innerHTML = newContent; },
-                {
+                () => ({
                     element: element,
                     operation: 'composite-innerHTML-set',
                     newContent,
                     compositeOpId,
-                }
+                }),
             );
 
             if (!setContentSuccess) {
@@ -598,14 +826,14 @@ var PageScanner = (() => {
                 return;
             }
 
-            debugLog('compositeAnimationend', 'Content swap successful', {
+            debugLog('compositeAnimationend', 'Content swap successful', createDebugData(() => ({
                 compositeOpId,
                 newElementInfo: getNodeDebugInfo(element),
-            });
+            })));
 
             // Adjust font size intelligently based on available space ("Leg Stretching")
             adjustSizeIntelligently(element, originalRect);
-        }, { once: true });
+        });
 
         debugLog('replaceCompositeElement', 'Composite replacement setup complete', { compositeOpId });
     }
@@ -618,11 +846,213 @@ var PageScanner = (() => {
         while (current) {
             if (SKIP_TAGS.has(current.tagName)) return true;
             if (current.isContentEditable) return true;
-            if (current.classList && current.classList.contains(REPLACED_CLASS)) return true;
+            if (
+                current.classList &&
+                (
+                    current.classList.contains(REPLACED_CLASS) ||
+                    current.classList.contains('cc-fading-out')
+                )
+            ) {
+                return true;
+            }
             if (current.id === 'currency-converter-tooltip') return true;
             current = current.parentElement || current.getRootNode?.().host || null;
         }
         return false;
+    }
+
+    function isExtensionOwnedNode(node) {
+        if (node && scannerCreatedNodes.has(node)) return true;
+        let current = node?.nodeType === Node.ELEMENT_NODE ? node : node?.parentElement;
+        while (current) {
+            if (
+                current.classList?.contains(REPLACED_CLASS) ||
+                current.classList?.contains('cc-fading-out') ||
+                current.id === 'currency-converter-tooltip'
+            ) {
+                return true;
+            }
+            current = current.parentElement || current.getRootNode?.().host || null;
+        }
+        return false;
+    }
+
+    function noCurrencyContext() {
+        return { status: 'none', currency: null };
+    }
+
+    /**
+     * Find one explicit currency in text surrounding an ambiguous price.
+     * Text fragments are joined with spaces so codes and amounts split across
+     * sibling elements can still be read together.
+     */
+    function analyzeCurrencyContext(fragments, detection, numberFormat = 'auto') {
+        if (
+            !Array.isArray(fragments) ||
+            !detection ||
+            !Array.isArray(detection.currencies) ||
+            detection.currencies.length < 2
+        ) {
+            return noCurrencyContext();
+        }
+
+        const text = fragments
+            .map(fragment => String(fragment || '').trim())
+            .filter(Boolean)
+            .join(' ');
+        if (!text || text.length > MAX_CONTEXT_TEXT_LENGTH) return noCurrencyContext();
+
+        const possibleCurrencies = new Set(detection.currencies);
+        const explicitCurrencies = new Set();
+        let startIndex = 0;
+        let detectionsProcessed = 0;
+
+        for (const fragment of fragments) {
+            const standaloneCode = String(fragment || '').trim().toUpperCase();
+            if (possibleCurrencies.has(standaloneCode)) {
+                explicitCurrencies.add(standaloneCode);
+                if (explicitCurrencies.size > 1) {
+                    return { status: 'conflict', currency: null };
+                }
+            }
+        }
+
+        while (
+            startIndex < text.length &&
+            detectionsProcessed < MAX_CONTEXT_DETECTIONS
+        ) {
+            const contextDetection = CurrencyDetector.detectCurrency(text, numberFormat, {
+                maxLength: MAX_CONTEXT_TEXT_LENGTH,
+                startIndex,
+            });
+            if (!contextDetection) break;
+
+            const normalizedToken = String(contextDetection.symbol || '').trim().toLowerCase();
+            const isExplicit = (
+                contextDetection.currencies.length === 1 &&
+                !CONTEXT_AMBIGUOUS_TOKENS.has(normalizedToken)
+            );
+            const currency = contextDetection.currencies[0];
+            if (isExplicit && possibleCurrencies.has(currency)) {
+                explicitCurrencies.add(currency);
+                if (explicitCurrencies.size > 1) {
+                    return { status: 'conflict', currency: null };
+                }
+            }
+
+            startIndex = Math.max(contextDetection.end, startIndex + 1);
+            detectionsProcessed++;
+        }
+
+        if (explicitCurrencies.size === 1) {
+            return {
+                status: 'resolved',
+                currency: explicitCurrencies.values().next().value,
+            };
+        }
+        return noCurrencyContext();
+    }
+
+    function isHiddenContextNode(node, scope) {
+        let current = node.parentElement;
+        while (current) {
+            if (
+                current.hidden ||
+                current.getAttribute?.('aria-hidden') === 'true' ||
+                current.style?.display === 'none' ||
+                current.style?.visibility === 'hidden'
+            ) {
+                return true;
+            }
+            if (current === scope) break;
+            current = current.parentElement || current.getRootNode?.().host || null;
+        }
+        return false;
+    }
+
+    function collectContextTextFragments(scope) {
+        const ownerDocument = scope?.ownerDocument || document;
+        if (!scope || !ownerDocument?.createTreeWalker) return [];
+
+        const walker = ownerDocument.createTreeWalker(
+            scope,
+            NodeFilter.SHOW_TEXT,
+            {
+                acceptNode: (node) => {
+                    if (!node.textContent.trim()) return NodeFilter.FILTER_REJECT;
+                    if (shouldSkipNode(node)) return NodeFilter.FILTER_REJECT;
+                    if (isHiddenContextNode(node, scope)) return NodeFilter.FILTER_REJECT;
+                    return NodeFilter.FILTER_ACCEPT;
+                },
+            },
+        );
+
+        const fragments = [];
+        let totalLength = 0;
+        let node;
+        while ((node = walker.nextNode())) {
+            const fragment = node.textContent.trim();
+            totalLength += fragment.length + (fragments.length > 0 ? 1 : 0);
+            if (totalLength > MAX_CONTEXT_TEXT_LENGTH) return null;
+            fragments.push(fragment);
+        }
+        return fragments;
+    }
+
+    function getParentContextScope(scope) {
+        if (scope.parentElement) return scope.parentElement;
+        const root = scope.getRootNode?.();
+        if (root?.host && root.host !== scope) return root.host;
+        return null;
+    }
+
+    /**
+     * Search from the price outward and stop at the first useful local scope.
+     */
+    function findScopedCurrencyContext(
+        startNode,
+        detection,
+        numberFormat = 'auto',
+        fragmentCollector = collectContextTextFragments,
+        fragmentCache = null,
+    ) {
+        if (!startNode || !detection || detection.currencies?.length < 2) {
+            return noCurrencyContext();
+        }
+
+        let scope = startNode.nodeType === 3 ? startNode.parentElement : startNode;
+        let depth = 0;
+
+        while (scope && depth < MAX_CONTEXT_ANCESTORS) {
+            if (scope.tagName === 'BODY' || scope.tagName === 'HTML') break;
+
+            let fragments;
+            if (fragmentCache?.has(scope)) {
+                fragments = fragmentCache.get(scope);
+            } else {
+                fragments = fragmentCollector(scope);
+                fragmentCache?.set(scope, fragments);
+            }
+            if (fragments === null) break;
+
+            const result = analyzeCurrencyContext(fragments, detection, numberFormat);
+            if (result.status !== 'none') return result;
+
+            scope = getParentContextScope(scope);
+            depth++;
+        }
+
+        return noCurrencyContext();
+    }
+
+    function resolveDetectedCurrency(detection, config, contextResult) {
+        if (!detection || !Array.isArray(detection.currencies)) return null;
+        if (detection.currencies.length <= 1) {
+            return chooseDetectedCurrency(detection, config);
+        }
+        if (contextResult?.status === 'resolved') return contextResult.currency;
+        if (contextResult?.status === 'conflict') return null;
+        return chooseDetectedCurrency(detection, config);
     }
 
     /**
@@ -638,6 +1068,7 @@ var PageScanner = (() => {
             detectionsProcessed < MAX_DETECTIONS_PER_TEXT_NODE &&
             replacementCount < settings.autoReplaceLimit
         ) {
+            if (shouldSkipNode(currentTextNode)) return;
             const text = currentTextNode.textContent;
             if (!text || text.length > LIMITS.MAX_SELECTION_LENGTH * 2) return;
 
@@ -647,7 +1078,16 @@ var PageScanner = (() => {
             });
             if (!detection) return;
 
-            const fromCurrency = chooseDetectedCurrency(detection, settings);
+            const contextResult = detection.currencies.length > 1
+                ? findScopedCurrencyContext(
+                    currentTextNode,
+                    detection,
+                    settings.numberFormat,
+                    collectContextTextFragments,
+                    contextFragmentCache,
+                )
+                : null;
+            const fromCurrency = resolveDetectedCurrency(detection, settings, contextResult);
             if (!fromCurrency) {
                 searchStart = detection.end;
                 detectionsProcessed++;
@@ -722,19 +1162,23 @@ var PageScanner = (() => {
         return negativeStyle === 'parentheses' ? `(${label})` : label;
     }
 
+    function formatOriginalTitle(original, fromCurrency) {
+        return `Original: ${original} (${fromCurrency})`;
+    }
+
     /**
      * Replace a currency match in a text node with a span showing converted value.
      * Also handles orphaned currency symbols adjacent to the match (e.g., "$69.99 CAD").
      * Animates: fade out original, then fade in converted.
      */
     function replaceInTextNode(textNode, detection, fromCurrency, convertedAmount) {
-        const replaceOpId = debugLog('replaceInTextNode', 'Starting replacement', {
+        const replaceOpId = debugLog('replaceInTextNode', 'Starting replacement', createDebugData(() => ({
             textContent: textNode.textContent?.substring(0, 80),
             detection: detection.original,
             fromCurrency,
             convertedAmount,
             textNodeInfo: getNodeDebugInfo(textNode),
-        });
+        })));
 
         const text = textNode.textContent;
         let matchStart = -1;
@@ -756,17 +1200,21 @@ var PageScanner = (() => {
 
         const parent = textNode.parentNode;
         if (!parent) {
-            debugWarn('replaceInTextNode', 'No parent node found', { textNodeInfo: getNodeDebugInfo(textNode) });
+            debugWarn(
+                'replaceInTextNode',
+                'No parent node found',
+                createDebugData(() => ({ textNodeInfo: getNodeDebugInfo(textNode) })),
+            );
             return null;
         }
 
         // Log parent chain for debugging React issues
-        debugLog('replaceInTextNode', 'Parent node info', {
+        debugLog('replaceInTextNode', 'Parent node info', createDebugData(() => ({
             parentInfo: getNodeDebugInfo(parent),
             grandparentInfo: getNodeDebugInfo(parent.parentNode),
-            isTextNodeInDocument: document.contains(textNode),
-            isParentInDocument: document.contains(parent),
-        });
+            isTextNodeInDocument: isNodeConnected(textNode),
+            isParentInDocument: isNodeConnected(parent),
+        })));
 
         // Check for orphaned currency symbols immediately before the match
         // This handles cases like "$69.99 CAD" where ISO match leaves "$" behind
@@ -809,6 +1257,7 @@ var PageScanner = (() => {
         const fadeOutSpan = document.createElement(WRAPPER_TAG);
         fadeOutSpan.className = 'cc-fading-out';
         fadeOutSpan.textContent = fullOriginal;
+        scannerCreatedNodes.add(fadeOutSpan);
 
         // Track this element for debugging
         registerElement(fadeOutSpan, 'fadeOutSpan-created');
@@ -816,10 +1265,15 @@ var PageScanner = (() => {
         // Build initial fragment with fade-out span
         const fragment = document.createDocumentFragment();
         let trailingTextNode = null;
-        if (before) fragment.appendChild(document.createTextNode(before));
+        if (before) {
+            const leadingTextNode = document.createTextNode(before);
+            scannerCreatedNodes.add(leadingTextNode);
+            fragment.appendChild(leadingTextNode);
+        }
         fragment.appendChild(fadeOutSpan);
         if (after) {
             trailingTextNode = document.createTextNode(after);
+            scannerCreatedNodes.add(trailingTextNode);
             fragment.appendChild(trailingTextNode);
         }
 
@@ -829,13 +1283,13 @@ var PageScanner = (() => {
         const replaceSuccess = safeDOMOperation(
             'replaceChild (textNode -> fragment)',
             () => parent.replaceChild(fragment, textNode),
-            {
+            () => ({
                 parent: parent,
                 child: textNode,
                 operation: 'initial-text-replacement',
                 fullOriginal,
                 replaceOpId,
-            }
+            }),
         );
 
         if (!replaceSuccess) {
@@ -843,26 +1297,26 @@ var PageScanner = (() => {
             return null;
         }
 
-        debugLog('replaceInTextNode', 'Initial replacement successful, setting up animation listener', {
+        debugLog('replaceInTextNode', 'Initial replacement successful, setting up animation listener', createDebugData(() => ({
             fadeOutSpanInfo: getNodeDebugInfo(fadeOutSpan),
             replaceOpId,
-        });
+        })));
 
         // After fade-out animation completes, swap to converted value with fade-in
-        fadeOutSpan.addEventListener('animationend', () => {
-            debugLog('animationend', 'Animation ended, starting swap', {
+        onAnimationOrNow(fadeOutSpan, () => {
+            debugLog('animationend', 'Animation ended, starting swap', createDebugData(() => ({
                 fadeOutSpanInfo: getNodeDebugInfo(fadeOutSpan),
-                inDocument: document.contains(fadeOutSpan),
+                inDocument: isNodeConnected(fadeOutSpan),
                 hasParent: !!fadeOutSpan.parentNode,
                 replaceOpId,
-            });
+            })));
 
             // Guard: element may have been removed during animation
             if (!fadeOutSpan.parentNode) {
                 debugWarn('animationend', 'fadeOutSpan has no parent, aborting swap', {
                     fadeOutSpanInfo: getNodeDebugInfo(fadeOutSpan),
                     originalParentInfo: getNodeDebugInfo(parentBeforeReplace),
-                    inDocument: document.contains(fadeOutSpan),
+                    inDocument: isNodeConnected(fadeOutSpan),
                     replaceOpId,
                     possibleCause: 'React likely re-rendered this component during animation',
                 });
@@ -872,7 +1326,7 @@ var PageScanner = (() => {
             const currentParent = fadeOutSpan.parentNode;
 
             // Additional check: verify parent is still in document
-            if (!document.contains(currentParent)) {
+            if (!isNodeConnected(currentParent)) {
                 debugWarn('animationend', 'Parent is no longer in document', {
                     parentInfo: getNodeDebugInfo(currentParent),
                     fadeOutSpanInfo: getNodeDebugInfo(fadeOutSpan),
@@ -884,9 +1338,13 @@ var PageScanner = (() => {
 
             const span = document.createElement(WRAPPER_TAG);
             span.className = REPLACED_CLASS;
+            if (!shouldAnimate()) {
+                span.classList.add('cc-no-animation');
+            }
+            scannerCreatedNodes.add(span);
             span.dataset.original = fullOriginal;
             span.dataset.fromCurrency = fromCurrency;
-            span.title = `Original: ${fullOriginal}`;
+            span.title = formatOriginalTitle(fullOriginal, fromCurrency);
 
             span.textContent = formatReplacement(
                 convertedAmount,
@@ -918,24 +1376,24 @@ var PageScanner = (() => {
             const swapSuccess = safeDOMOperation(
                 'replaceChild (fadeOutSpan -> finalSpan)',
                 () => currentParent.replaceChild(span, fadeOutSpan),
-                {
+                () => ({
                     parent: currentParent,
                     child: fadeOutSpan,
                     operation: 'animation-swap',
                     fullOriginal,
                     replaceOpId,
-                }
+                }),
             );
 
             if (swapSuccess) {
-                debugLog('animationend', 'Swap successful', {
+                debugLog('animationend', 'Swap successful', createDebugData(() => ({
                     newSpanInfo: getNodeDebugInfo(span),
                     replaceOpId
-                });
+                })));
                 // Adjust font size intelligently based on available space ("Leg Stretching")
                 adjustSizeIntelligently(span, originalRect);
             }
-        }, { once: true });
+        });
 
         debugLog('replaceInTextNode', 'Replacement setup complete', { replaceOpId });
         return trailingTextNode;
@@ -1013,10 +1471,10 @@ var PageScanner = (() => {
      * Restore a single replaced element to its original text.
      */
     function restoreElement(element) {
-        const restoreOpId = debugLog('restoreElement', 'Starting restore', {
+        const restoreOpId = debugLog('restoreElement', 'Starting restore', createDebugData(() => ({
             elementInfo: getNodeDebugInfo(element),
             original: element?.dataset?.original,
-        });
+        })));
 
         if (!element || !element.dataset.original) {
             debugWarn('restoreElement', 'Missing element or original data', { element: !!element });
@@ -1027,23 +1485,24 @@ var PageScanner = (() => {
             debugWarn('restoreElement', 'Element has no parent, cannot restore', {
                 restoreOpId,
                 elementInfo: getNodeDebugInfo(element),
-                inDocument: document.contains(element),
+                inDocument: isNodeConnected(element),
             });
             return;
         }
 
         const textNode = document.createTextNode(element.dataset.original);
+        scannerCreatedNodes.add(textNode);
 
         const restoreSuccess = safeDOMOperation(
             'restoreElement replaceChild',
             () => element.parentNode.replaceChild(textNode, element),
-            {
+            () => ({
                 parent: element.parentNode,
                 child: element,
                 operation: 'restore',
                 original: element.dataset.original,
                 restoreOpId,
-            }
+            }),
         );
 
         if (restoreSuccess) {
@@ -1071,73 +1530,133 @@ var PageScanner = (() => {
      * Set up MutationObserver to handle dynamic content.
      */
     function setupMutationObserver(root = document.body) {
-        if (!root || observers.has(root)) {
+        if (!root) return;
+
+        const existingState = observers.get(root);
+        if (existingState?.active) {
             debugLog('MutationObserver', 'Observer already exists, skipping setup');
+            return;
+        }
+
+        if (existingState) {
+            existingState.observer.observe(root, {
+                childList: true,
+                subtree: true,
+            });
+            existingState.active = true;
+            debugLog('MutationObserver', 'Observer resumed');
             return;
         }
 
         debugLog('MutationObserver', 'Setting up MutationObserver');
 
-        let pendingNodes = [];
+        const pendingNodes = new Set();
         let debounceTimer = null;
+        let firstPendingAt = 0;
         let mutationBatchId = 0;
+
+        function flushPendingNodes(batchId) {
+            debounceTimer = null;
+            firstPendingAt = 0;
+            if (!isEnabled || pendingNodes.size === 0) return;
+
+            const nodesToProcess = compactPendingNodes(pendingNodes);
+            pendingNodes.clear();
+
+            debugLog('MutationObserver', 'Queueing pending nodes', {
+                batchId,
+                pendingCount: nodesToProcess.length,
+                replacementCount,
+                limit: settings?.autoReplaceLimit,
+            });
+
+            for (const node of nodesToProcess) {
+                if (node?.isConnected === false || isExtensionOwnedNode(node)) continue;
+                queueScanRoot(node);
+            }
+        }
+
+        function schedulePendingFlush(batchId) {
+            if (pendingNodes.size === 0) return;
+
+            const now = Date.now();
+            if (!firstPendingAt) firstPendingAt = now;
+            if (debounceTimer) clearTimeout(debounceTimer);
+
+            const maxWaitRemaining = Math.max(
+                0,
+                MUTATION_MAX_WAIT_MS - (now - firstPendingAt),
+            );
+            const delay = Math.min(MUTATION_DEBOUNCE_MS, maxWaitRemaining);
+            debounceTimer = setTimeout(() => flushPendingNodes(batchId), delay);
+        }
 
         const observer = new MutationObserver((mutations) => {
             if (!isEnabled) return;
-            if (replacementCount >= settings.autoReplaceLimit) return;
+            if (replacementCount >= settings.autoReplaceLimit) {
+                observer.disconnect();
+                const state = observers.get(root);
+                if (state) state.active = false;
+                return;
+            }
 
             const batchId = ++mutationBatchId;
             let addedCount = 0;
             let removedCount = 0;
 
-            // Track removed nodes - this might help identify React re-renders
-            const removedNodes = [];
+            const removedNodes = DEBUG_MODE ? [] : null;
 
             for (const mutation of mutations) {
                 if (mutation.type === 'childList') {
-                    // Track removed nodes for debugging
-                    for (const node of mutation.removedNodes) {
-                        removedCount++;
-                        if (node.nodeType === Node.ELEMENT_NODE) {
-                            // Check if we modified this element
-                            if (node.classList?.contains(REPLACED_CLASS) ||
-                                node.classList?.contains('cc-fading-out')) {
-                                removedNodes.push({
-                                    type: 'replaced-element-removed',
-                                    nodeInfo: getNodeDebugInfo(node),
-                                    parentInfo: getNodeDebugInfo(mutation.target),
-                                });
-                            }
-                            // Check if it contains replaced elements
-                            const replacedInside = node.querySelectorAll?.(`.${REPLACED_CLASS}, .cc-fading-out`);
-                            if (replacedInside?.length) {
-                                removedNodes.push({
-                                    type: 'container-with-replaced-removed',
-                                    containedCount: replacedInside.length,
-                                    nodeInfo: getNodeDebugInfo(node),
-                                    parentInfo: getNodeDebugInfo(mutation.target),
-                                });
+                    if (DEBUG_MODE) {
+                        for (const node of mutation.removedNodes) {
+                            removedCount++;
+                            if (node.nodeType === Node.ELEMENT_NODE) {
+                                if (
+                                    node.classList?.contains(REPLACED_CLASS) ||
+                                    node.classList?.contains('cc-fading-out')
+                                ) {
+                                    removedNodes.push({
+                                        type: 'replaced-element-removed',
+                                        nodeInfo: getNodeDebugInfo(node),
+                                        parentInfo: getNodeDebugInfo(mutation.target),
+                                    });
+                                }
+
+                                const replacedInside = node.querySelectorAll?.(
+                                    `.${REPLACED_CLASS}, .cc-fading-out`,
+                                );
+                                if (replacedInside?.length) {
+                                    removedNodes.push({
+                                        type: 'container-with-replaced-removed',
+                                        containedCount: replacedInside.length,
+                                        nodeInfo: getNodeDebugInfo(node),
+                                        parentInfo: getNodeDebugInfo(mutation.target),
+                                    });
+                                }
                             }
                         }
                     }
 
                     for (const node of mutation.addedNodes) {
-                        if (node.nodeType === Node.ELEMENT_NODE) {
-                            // Skip nodes we've already processed
-                            if (node.classList && node.classList.contains(REPLACED_CLASS)) continue;
-                            if (node.classList && node.classList.contains('cc-fading-out')) continue;
-                            pendingNodes.push(node);
-                            addedCount++;
-                        } else if (node.nodeType === Node.TEXT_NODE && node.textContent.trim()) {
-                            pendingNodes.push(node);
-                            addedCount++;
+                        if (isExtensionOwnedNode(node)) continue;
+                        if (
+                            node.nodeType !== Node.ELEMENT_NODE &&
+                            !(
+                                node.nodeType === Node.TEXT_NODE &&
+                                node.textContent.trim()
+                            )
+                        ) {
+                            continue;
                         }
+
+                        pendingNodes.add(node);
+                        addedCount++;
                     }
                 }
             }
 
-            // Log if React appears to be removing our modified elements
-            if (removedNodes.length > 0) {
+            if (removedNodes?.length > 0) {
                 debugWarn('MutationObserver', 'Detected removal of modified elements - possible React re-render', {
                     batchId,
                     removedNodes,
@@ -1153,72 +1672,18 @@ var PageScanner = (() => {
                     mutationCount: mutations.length,
                     addedCount,
                     removedCount,
-                    pendingTotal: pendingNodes.length,
+                    pendingTotal: pendingNodes.size,
                 });
             }
 
-            // Debounce processing to batch rapid DOM changes
-            if (debounceTimer) clearTimeout(debounceTimer);
-            debounceTimer = setTimeout(() => {
-                if (isScanning || pendingNodes.length === 0) return;
-
-                const processBatchId = batchId;
-                debugLog('MutationObserver', 'Processing pending nodes', {
-                    processBatchId,
-                    pendingCount: pendingNodes.length,
-                    replacementCount,
-                    limit: settings?.autoReplaceLimit,
-                });
-
-                // Capture current settings at processing time to avoid stale closure
-                const currentSettings = settings;
-                const currentLimit = currentSettings?.autoReplaceLimit ?? 100;
-
-                const nodesToProcess = pendingNodes.slice();
-                pendingNodes = [];
-
-                let processedCount = 0;
-                let skippedCount = 0;
-
-                for (const node of nodesToProcess) {
-                    if (replacementCount >= currentLimit) {
-                        debugLog('MutationObserver', 'Reached replacement limit, stopping', {
-                            processBatchId,
-                            processedCount,
-                            skippedCount,
-                        });
-                        break;
-                    }
-
-                    // Check if node is still in document
-                    if (!document.contains(node)) {
-                        skippedCount++;
-                        continue; // Node was removed
-                    }
-
-                    if (node.nodeType === Node.ELEMENT_NODE) {
-                        scanNode(node);
-                        processedCount++;
-                    } else if (node.nodeType === Node.TEXT_NODE) {
-                        processTextNode(node);
-                        processedCount++;
-                    }
-                }
-
-                debugLog('MutationObserver', 'Batch processing complete', {
-                    processBatchId,
-                    processedCount,
-                    skippedCount,
-                    newReplacementCount: replacementCount,
-                });
-            }, 100);
+            schedulePendingFlush(batchId);
         });
 
         observer.observe(root, {
             childList: true,
             subtree: true,
         });
-        observers.set(root, observer);
+        observers.set(root, { observer, active: true });
 
         debugLog('MutationObserver', 'Observer now active');
     }
@@ -1240,5 +1705,16 @@ var PageScanner = (() => {
         shouldSkipNode,
         isSensitiveEmbeddedFrame,
         collectOpenShadowRoots,
+        analyzeCurrencyContext,
+        findScopedCurrencyContext,
+        resolveDetectedCurrency,
+        formatOriginalTitle,
+        drainScanWork,
+        drainDomTraversal,
+        compactPendingNodes,
+        createDebugData,
+        isNodeConnected,
+        shouldAnimate,
+        onAnimationOrNow,
     };
 })();

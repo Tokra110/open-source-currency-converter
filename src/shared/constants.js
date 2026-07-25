@@ -127,6 +127,16 @@ function filterCurrencyCodes(query, currencyNames = CURRENCY_NAMES) {
     .sort();
 }
 
+function getCurrencySearchState(query, selectedCode, currencyNames = CURRENCY_NAMES) {
+  const codes = filterCurrencyCodes(query, currencyNames);
+  const autoSelectedCode = codes.length === 1 ? codes[0] : null;
+  return {
+    codes,
+    selectedCode: autoSelectedCode || (codes.includes(selectedCode) ? selectedCode : ''),
+    autoSelectedCode,
+  };
+}
+
 var CURRENCY_CODE_TO_SYMBOL = {
   USD: '$',
   EUR: '€',
@@ -231,8 +241,29 @@ var DEFAULT_SETTINGS = {
   conversionMode: 'auto', // 'auto' (wholescan) or 'interactive' (tooltip)
   autoReplaceLimit: 2000, // Max replacements per page to prevent freezing
   theme: 'system', // 'system', 'light', 'dark'
-  disabledDomains: [] // List of domains where extension is disabled
+  disabledDomains: [], // List of domains where extension is disabled
+  disableAnimations: false // Show extension UI changes immediately
 };
+
+function getSiteHostname(locationValue) {
+  const ancestorOrigins = locationValue?.ancestorOrigins;
+  if (ancestorOrigins?.length) {
+    for (let index = ancestorOrigins.length - 1; index >= 0; index--) {
+      try {
+        const hostname = new URL(ancestorOrigins[index]).hostname;
+        if (hostname) return hostname;
+      } catch {
+        // Ignore malformed ancestor origins and continue to the frame URL.
+      }
+    }
+  }
+  return locationValue?.hostname || '';
+}
+
+function shouldLoadPageScannerRates(settings, hostname) {
+  if (!settings?.extensionEnabled || settings.conversionMode !== 'auto') return false;
+  return !settings.disabledDomains?.includes(hostname);
+}
 
 var DOLLAR_TOKENS = new Set([
   '$',

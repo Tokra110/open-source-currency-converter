@@ -17,7 +17,14 @@
                     <h1>Open Source<br>Currency Converter</h1>
                     <img src="../../icons/icon48.png" alt="Logo" class="header-logo">
                 </div>
-                <div class="global-toggle-wrapper">
+                <div class="header-controls">
+                    <button id="settingsToggle" class="settings-toggle" type="button"
+                        aria-label="Open settings" aria-pressed="false">
+                        <svg class="settings-gear" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                            <path d="m12 2.5 2 2.5 3-.25.75 2.9 2.5 1.5-1.25 2.75 1.25 2.75-2.5 1.5L17 19.25 14 19l-2 2.5-2-2.5-3 .25-.75-2.9-2.5-1.5 1.25-2.75L3.75 9.35l2.5-1.5L7 4.75 10 5l2-2.5Z" />
+                            <circle cx="12" cy="12" r="3" />
+                        </svg>
+                    </button>
                     <label class="switch">
                         <input type="checkbox" id="extensionEnabled">
                         <span class="slider round"></span>
@@ -26,108 +33,133 @@
             </div>
 
             <div class="site-toggle-wrapper" id="siteToggleContainer" style="display: none;">
-                <div class="site-info">
-                    <div class="site-status-dot" id="siteStatusDot"></div>
-                    <span id="siteHostname">example.com</span>
+                <div>
+                    <span class="site-label">On this site</span>
+                    <div class="site-info">
+                        <div class="site-status-dot" id="siteStatusDot"></div>
+                        <span id="siteHostname">example.com</span>
+                    </div>
                 </div>
-                <button id="siteToggleBtn" class="link-btn">Disable</button>
+                <button id="siteToggleBtn" class="site-toggle-btn" type="button">Enabled</button>
             </div>
-
-            <p id="statusText">Extension is Active</p>
         </header>
 
         <main id="mainContent">
-            <!-- Mode Selection -->
-            <div class="section mode-section">
-                <h2>Operation Mode</h2>
-                <div class="mode-switch">
-                    <div class="mode-option">
-                        <input type="radio" id="modeAuto" name="conversionMode" value="auto">
-                        <label for="modeAuto" class="mode-label">
-                            <span class="mode-title">Full Page</span>
-                            <span class="mode-desc">Auto-replace all prices</span>
+            <div class="panel-viewport">
+                <section id="primaryPanel" class="popup-panel">
+                <div class="section mode-section">
+                    <div class="mode-switch">
+                        <div class="mode-option">
+                            <input type="radio" id="modeAuto" name="conversionMode" value="auto">
+                            <label for="modeAuto" class="mode-label">
+                                <span class="mode-title">Hybrid</span>
+                                <span class="mode-desc">Scan + selection tooltips</span>
+                            </label>
+                        </div>
+                        <div class="mode-option">
+                            <input type="radio" id="modeInteractive" name="conversionMode" value="interactive">
+                            <label for="modeInteractive" class="mode-label">
+                                <span class="mode-title">Interactive</span>
+                                <span class="mode-desc">Selection tooltips only</span>
+                            </label>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="section settings-section">
+                    <div class="form-group">
+                        <label for="targetCurrency">Convert to</label>
+                        <input
+                            type="search"
+                            id="currencySearch"
+                            placeholder="Search code or currency name"
+                            aria-label="Search target currencies"
+                            autocomplete="off"
+                        >
+                        <select id="targetCurrency"></select>
+                    </div>
+                </div>
+                </section>
+
+                <section id="settingsPanel" class="popup-panel settings-panel" aria-hidden="true">
+                <h2 class="settings-view-title">Settings</h2>
+                <div class="settings-group">
+                    <h2>Currency recognition</h2>
+                    <div class="settings-fields-grid">
+                        <div class="form-group settings-field-wide">
+                            <label for="defaultDollarCurrency">Default '$'</label>
+                            <select id="defaultDollarCurrency">
+                                <option value="USD">USD - US Dollar</option>
+                                <option value="AUD">AUD - Australian Dollar</option>
+                                <option value="CAD">CAD - Canadian Dollar</option>
+                                <option value="NZD">NZD - New Zealand Dollar</option>
+                                <option value="SGD">SGD - Singapore Dollar</option>
+                                <option value="HKD">HKD - Hong Kong Dollar</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label for="defaultYenCurrency">Default '¥'</label>
+                            <select id="defaultYenCurrency">
+                                <option value="JPY">JPY - Japanese Yen</option>
+                                <option value="CNY">CNY - Chinese Yuan</option>
+                            </select>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="defaultKrCurrency">Default 'kr'</label>
+                            <select id="defaultKrCurrency">
+                                <option value="SEK">SEK - Swedish Krona</option>
+                                <option value="NOK">NOK - Norwegian Krone</option>
+                                <option value="DKK">DKK - Danish Krone</option>
+                                <option value="ISK">ISK - Icelandic Krona</option>
+                            </select>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="settings-group">
+                    <h2>Number formats</h2>
+                    <div class="settings-fields-grid">
+                        <div class="form-group">
+                            <label for="numberFormat">Read prices as</label>
+                            <select id="numberFormat">
+                                <option value="auto">Auto-detect</option>
+                                <option value="us">1,234.56</option>
+                                <option value="eu">1.234,56</option>
+                            </select>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="outputFormat">Display conversions as</label>
+                            <select id="outputFormat">
+                                <option value="smart">Smart (browser preference)</option>
+                                <option value="us">1,234.56</option>
+                                <option value="eu">1.234,56</option>
+                            </select>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="settings-group">
+                    <h2>Motion</h2>
+                    <div class="preference-row">
+                        <div class="preference-copy">
+                            <label for="disableAnimations">Disable animations</label>
+                            <p>Show conversions and tooltips immediately.</p>
+                        </div>
+                        <label class="switch">
+                            <input type="checkbox" id="disableAnimations">
+                            <span class="slider round"></span>
                         </label>
                     </div>
-                    <div class="mode-option">
-                        <input type="radio" id="modeInteractive" name="conversionMode" value="interactive">
-                        <label for="modeInteractive" class="mode-label">
-                            <span class="mode-title">Interactive</span>
-                            <span class="mode-desc">Tooltip on selection</span>
-                        </label>
-                    </div>
-                </div>
-            </div>
-
-            <hr>
-
-            <!-- General Settings -->
-            <div class="section settings-section">
-                <div class="form-group">
-                    <label for="targetCurrency">Convert to</label>
-                    <input
-                        type="search"
-                        id="currencySearch"
-                        placeholder="Search code or currency name"
-                        aria-label="Search target currencies"
-                        autocomplete="off"
-                    >
-                    <select id="targetCurrency"></select>
                 </div>
 
-                <div class="form-group">
-                    <label for="defaultDollarCurrency">Default '$'</label>
-                    <select id="defaultDollarCurrency">
-                        <option value="USD">USD - US Dollar</option>
-                        <option value="AUD">AUD - Australian Dollar</option>
-                        <option value="CAD">CAD - Canadian Dollar</option>
-                        <option value="NZD">NZD - New Zealand Dollar</option>
-                        <option value="SGD">SGD - Singapore Dollar</option>
-                        <option value="HKD">HKD - Hong Kong Dollar</option>
-                    </select>
-                </div>
-
-                <div class="form-group">
-                    <label for="defaultYenCurrency">Default '¥'</label>
-                    <select id="defaultYenCurrency">
-                        <option value="JPY">JPY - Japanese Yen</option>
-                        <option value="CNY">CNY - Chinese Yuan</option>
-                    </select>
-                </div>
-
-                <div class="form-group">
-                    <label for="defaultKrCurrency">Default 'kr'</label>
-                    <select id="defaultKrCurrency">
-                        <option value="SEK">SEK - Swedish Krona</option>
-                        <option value="NOK">NOK - Norwegian Krone</option>
-                        <option value="DKK">DKK - Danish Krone</option>
-                        <option value="ISK">ISK - Icelandic Krona</option>
-                    </select>
-                </div>
-
-                <div class="form-group">
-                    <label for="defaultFrCurrency">Default 'Fr'</label>
-                    <select id="defaultFrCurrency">
-                        <option value="CHF">CHF - Swiss Franc</option>
-                    </select>
-                </div>
-
-                <div class="form-group">
-                    <label for="numberFormat">Read prices as</label>
-                    <select id="numberFormat">
-                        <option value="auto">Auto-detect</option>
-                        <option value="us">1,234.56</option>
-                        <option value="eu">1.234,56</option>
-                    </select>
-                </div>
-
-                <div class="form-group">
-                    <label for="outputFormat">Display conversions as</label>
-                    <select id="outputFormat">
-                        <option value="smart">Smart (browser preference)</option>
-                        <option value="us">1,234.56</option>
-                        <option value="eu">1.234,56</option>
-                    </select>
-                </div>
+                <section class="disabled-sites-section">
+                    <h2>Disabled sites</h2>
+                    <p id="disabledSitesEmpty" class="empty-state">No sites are disabled.</p>
+                    <ul id="disabledSitesList" class="disabled-sites-list"></ul>
+                </section>
+                </section>
             </div>
         </main>
 

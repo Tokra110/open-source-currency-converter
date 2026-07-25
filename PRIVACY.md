@@ -1,6 +1,6 @@
 # Privacy Policy for Open Source Currency Converter
 
-**Last updated: February 3, 2026**
+**Last updated: July 25, 2026**
 
 This Privacy Policy describes how Open Source Currency Converter ("we", "us", or "our") handles your information in connection with your use of our browser extension.
 
