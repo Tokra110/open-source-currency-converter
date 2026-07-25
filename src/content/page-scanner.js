@@ -11,6 +11,15 @@ var PageScanner = (() => {
     let replacementCount = 0;
     const observers = new Map();
     const scannerCreatedNodes = new WeakSet();
+    // Page-owned text nodes we detached while converting, mapped to what we
+    // rendered in their place. A site that kept a reference to one of these
+    // nodes updates it with `nodeValue = ...`, which produces no mutation in
+    // the connected tree, so the observers below are the only way to see it.
+    const originGroups = new WeakMap();
+    const compositeOrigins = new WeakMap();
+    const compositeRendered = new WeakMap();
+    const originObservers = new Set();
+    let activeOrigin = null;
     let scanWork = [];
     let scheduledScanWork = null;
     let scanStartedAt = 0;
@@ -33,9 +42,16 @@ var PageScanner = (() => {
     const MAX_SCAN_ITEMS_PER_CHUNK = 150;
     const MIN_SCAN_ITEMS_PER_CHUNK = 20;
     const SCAN_IDLE_TIMEOUT_MS = 250;
+    const ANIMATION_FALLBACK_MS = 500;
     const MUTATION_DEBOUNCE_MS = 100;
     const MUTATION_MAX_WAIT_MS = 500;
     const COMPOSITE_SELECTOR = '[class*="price"], [class*="Price"], [data-price], [itemprop="price"]';
+    const MAX_SPLIT_PRICE_ANCESTORS = 3;
+    const MIN_SPLIT_PRICE_MATCH_RATIO = 0.2;
+    const CURRENCY_FRAGMENT_TOKENS = new Set([
+        ...Object.keys(CURRENCY_SYMBOLS),
+        ...Object.keys(CURRENCY_NAMES),
+    ].map(token => token.toLowerCase()));
     const CONTEXT_AMBIGUOUS_TOKENS = new Set([
         '$', 'dollar', 'dollars', 'buck', 'bucks', 'greenback', 'greenbacks',
         '¥', 'kr', 'fr',
@@ -98,7 +114,19 @@ var PageScanner = (() => {
             callback();
             return;
         }
-        element.addEventListener('animationend', callback, { once: true });
+
+        let completed = false;
+        let fallbackTimer = null;
+        const complete = () => {
+            if (completed) return;
+            completed = true;
+            if (fallbackTimer) clearTimeout(fallbackTimer);
+            element.removeEventListener?.('animationend', complete);
+            callback();
+        };
+
+        element.addEventListener('animationend', complete, { once: true });
+        fallbackTimer = setTimeout(complete, ANIMATION_FALLBACK_MS);
     }
 
     function debugWarn(category, message, data = {}) {
@@ -414,6 +442,7 @@ var PageScanner = (() => {
         scheduledScanWork = null;
         scanWork = [];
         contextFragmentCache = null;
+        disconnectOriginObservers();
         for (const state of observers.values()) {
             state.observer.disconnect();
         }
@@ -459,6 +488,9 @@ var PageScanner = (() => {
             root,
             rootPending: true,
             walker,
+            candidates: [],
+            candidateSet: new Set(),
+            phase: 'discover',
         });
         scheduleScanQueue();
     }
@@ -472,7 +504,58 @@ var PageScanner = (() => {
         scheduledScanWork = scheduleIdleWork(processScanQueue);
     }
 
-    function processDiscoveredNode(node) {
+    function queueScanCandidate(traversal, node) {
+        if (!node || traversal.candidateSet.has(node)) return;
+        traversal.candidateSet.add(node);
+        traversal.candidates.push(node);
+    }
+
+    function isCurrencyFragment(text) {
+        return CURRENCY_FRAGMENT_TOKENS.has(text.trim().toLowerCase());
+    }
+
+    function isCompactSplitPriceText(text, detection) {
+        return (
+            !!detection &&
+            text.length <= 50 &&
+            detection.original.length / text.length >= MIN_SPLIT_PRICE_MATCH_RATIO
+        );
+    }
+
+    function findSplitPriceCandidate(textNode) {
+        if (!isCurrencyFragment(textNode.textContent)) return null;
+
+        let bestCandidate = null;
+        let ancestor = textNode.parentElement;
+
+        for (
+            let depth = 0;
+            depth < MAX_SPLIT_PRICE_ANCESTORS && ancestor;
+            depth++
+        ) {
+            const text = ancestor.textContent.trim();
+            if (text.length > 50) break;
+
+            if (ancestor.childElementCount > 0) {
+                const detection = detectCompositeCurrency(text);
+                if (
+                    isCompactSplitPriceText(text, detection) &&
+                    (
+                        !bestCandidate ||
+                        detection.original.length > bestCandidate.detection.original.length
+                    )
+                ) {
+                    bestCandidate = { element: ancestor, detection };
+                }
+            }
+
+            ancestor = ancestor.parentElement || ancestor.getRootNode?.().host || null;
+        }
+
+        return bestCandidate?.element || null;
+    }
+
+    function collectDiscoveredNode(traversal, node) {
         if (
             !isEnabled ||
             replacementCount >= settings.autoReplaceLimit ||
@@ -483,7 +566,8 @@ var PageScanner = (() => {
 
         if (node.nodeType === Node.TEXT_NODE) {
             if (node.textContent.trim() && !shouldSkipNode(node)) {
-                processTextNode(node);
+                queueScanCandidate(traversal, node);
+                queueScanCandidate(traversal, findSplitPriceCandidate(node));
             }
             return;
         }
@@ -491,13 +575,32 @@ var PageScanner = (() => {
         if (node.nodeType !== Node.ELEMENT_NODE) return;
 
         if (node.matches?.(COMPOSITE_SELECTOR)) {
-            processCompositeElement(node);
+            queueScanCandidate(traversal, node);
         }
 
         if (node.shadowRoot) {
             ensureShadowStyles(node.shadowRoot);
             scanNode(node.shadowRoot);
             setupMutationObserver(node.shadowRoot);
+        }
+    }
+
+    function processScanCandidate(node) {
+        if (
+            !isEnabled ||
+            replacementCount >= settings.autoReplaceLimit ||
+            node?.isConnected === false
+        ) {
+            return;
+        }
+
+        if (node.nodeType === Node.TEXT_NODE) {
+            processTextNode(node);
+            return;
+        }
+
+        if (node.nodeType === Node.ELEMENT_NODE) {
+            processCompositeElement(node);
         }
     }
 
@@ -516,15 +619,34 @@ var PageScanner = (() => {
             )
         ) {
             const remainingLimit = MAX_SCAN_ITEMS_PER_CHUNK - processed;
-            const result = drainDomTraversal(
-                scanWork[0],
-                processDiscoveredNode,
-                deadline,
-                remainingLimit,
-            );
-            processed += result.processed;
+            const currentWork = scanWork[0];
 
-            if (result.done) {
+            if (currentWork.phase === 'discover') {
+                const result = drainDomTraversal(
+                    currentWork,
+                    node => collectDiscoveredNode(currentWork, node),
+                    deadline,
+                    remainingLimit,
+                );
+                processed += result.processed;
+
+                if (!result.done) break;
+
+                currentWork.phase = 'process';
+                currentWork.walker = null;
+            }
+
+            const candidatesBefore = currentWork.candidates.length;
+            const candidateLimit = MAX_SCAN_ITEMS_PER_CHUNK - processed;
+            drainScanWork(
+                currentWork.candidates,
+                processScanCandidate,
+                deadline,
+                candidateLimit,
+            );
+            processed += candidatesBefore - currentWork.candidates.length;
+
+            if (currentWork.candidates.length === 0) {
                 scanWork.shift();
                 continue;
             }
@@ -679,18 +801,60 @@ var PageScanner = (() => {
     /**
      * Process an element that might contain a composite price.
      */
-    function processCompositeElement(element) {
-        if (shouldSkipNode(element)) return;
+    function detectCompositeCurrency(text) {
+        if (!text || text.length > 50) return null;
 
-        // Get the combined text content
-        const text = element.textContent.trim();
-        if (!text || text.length > 50) return; // Too long to be just a price
-
-        const detection = CurrencyDetector.detectCurrency(text, settings.numberFormat, {
+        return CurrencyDetector.detectCurrency(text, settings.numberFormat, {
             maxLength: 50,
             startIndex: 0,
         });
-        if (!detection) return;
+    }
+
+    function isFocusedPriceText(text, detection) {
+        return !(
+            text.length > 15 &&
+            detection.original.length < text.length * 0.5
+        );
+    }
+
+    function findCompositeDetection(element) {
+        const text = element.textContent.trim();
+        const detection = detectCompositeCurrency(text);
+        if (detection && isFocusedPriceText(text, detection)) {
+            return { text, detection };
+        }
+
+        // Some storefronts render the visible price in an aria-hidden wrapper
+        // and add a second screen-reader-only copy. Read the rendered wrapper,
+        // but only let its nearest price-like ancestor own the replacement.
+        for (const renderedPrice of element.querySelectorAll('[aria-hidden="true"]')) {
+            const rect = renderedPrice.getBoundingClientRect();
+            if (rect.width <= 0 && rect.height <= 0) continue;
+            if (renderedPrice.closest(COMPOSITE_SELECTOR) !== element) continue;
+
+            const renderedText = renderedPrice.textContent.trim();
+            const renderedDetection = detectCompositeCurrency(renderedText);
+            if (
+                renderedDetection &&
+                isFocusedPriceText(renderedText, renderedDetection)
+            ) {
+                return {
+                    text: renderedText,
+                    detection: renderedDetection,
+                };
+            }
+        }
+
+        return null;
+    }
+
+    function processCompositeElement(element) {
+        if (shouldSkipNode(element)) return;
+
+        const compositeDetection = findCompositeDetection(element);
+        if (!compositeDetection) return;
+
+        const { text, detection } = compositeDetection;
 
         const contextResult = detection.currencies.length > 1
             ? findScopedCurrencyContext(
@@ -706,28 +870,30 @@ var PageScanner = (() => {
 
         if (fromCurrency === settings.targetCurrency) return;
 
-        // Surgical Guard: If the detected match covers a small fraction of the element's text,
-        // it's likely a container row. We'll skip replacing the whole row and let the
-        // scanner find individual price elements inside it.
-        const originalLength = detection.original.length;
-        const totalLength = text.length;
-
-        // If the price is less than 50% of the total text and the text is reasonably long,
-        // it's probably too "noisy" to replace the whole container.
-        if (totalLength > 15 && originalLength < totalLength * 0.5) return;
-
         const convertedAmount = convertCurrencyLocal(detection.amount, fromCurrency, settings.targetCurrency);
         if (convertedAmount === null) return;
 
         // Replace the entire element's content
-        replaceCompositeElement(element, detection, fromCurrency, convertedAmount);
+        replaceCompositeElement(
+            element,
+            text,
+            detection,
+            fromCurrency,
+            convertedAmount,
+        );
         replacementCount++;
     }
 
     /**
      * Replace a composite element's content with converted value.
      */
-    function replaceCompositeElement(element, detection, fromCurrency, convertedAmount) {
+    function replaceCompositeElement(
+        element,
+        compositeText,
+        detection,
+        fromCurrency,
+        convertedAmount,
+    ) {
         const compositeOpId = debugLog('replaceCompositeElement', 'Starting composite replacement', createDebugData(() => ({
             elementInfo: getNodeDebugInfo(element),
             detection: detection.original,
@@ -795,27 +961,38 @@ var PageScanner = (() => {
             element.dataset.fromCurrency = fromCurrency;
             element.title = formatOriginalTitle(fullOriginal, fromCurrency);
 
-            // Standard horizontal layout
-            const newContent = formatReplacement(
+            const replacement = formatReplacement(
                 convertedAmount,
                 settings.targetCurrency,
                 detection.negativeStyle,
                 detection.compact,
             );
+            const newContent = [
+                compositeText.slice(0, detection.start),
+                replacement,
+                compositeText.slice(detection.end),
+            ].join('');
 
-            debugLog('compositeAnimationend', 'About to set innerHTML', createDebugData(() => ({
+            debugLog('compositeAnimationend', 'About to set text content', createDebugData(() => ({
                 compositeOpId,
                 newContent,
                 currentInnerHTML: element.innerHTML?.substring(0, 50),
             })));
 
-            // THIS IS A CRITICAL POINT - modifying innerHTML can conflict with React
+            // Capture the site's own text nodes before textContent drops them.
+            const retainedTextNodes = [];
+            const retainWalker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
+            let retainedNode;
+            while ((retainedNode = retainWalker.nextNode())) {
+                retainedTextNodes.push(retainedNode);
+            }
+
             const setContentSuccess = safeDOMOperation(
-                'innerHTML modification',
-                () => { element.innerHTML = newContent; },
+                'textContent modification',
+                () => { element.textContent = newContent; },
                 () => ({
                     element: element,
-                    operation: 'composite-innerHTML-set',
+                    operation: 'composite-textContent-set',
                     newContent,
                     compositeOpId,
                 }),
@@ -825,6 +1002,9 @@ var PageScanner = (() => {
                 debugError('compositeAnimationend', 'Failed to set innerHTML', null, { compositeOpId });
                 return;
             }
+
+            compositeRendered.set(element, newContent);
+            watchCompositeOrigins(element, retainedTextNodes);
 
             debugLog('compositeAnimationend', 'Content swap successful', createDebugData(() => ({
                 compositeOpId,
@@ -1265,8 +1445,9 @@ var PageScanner = (() => {
         // Build initial fragment with fade-out span
         const fragment = document.createDocumentFragment();
         let trailingTextNode = null;
+        let leadingTextNode = null;
         if (before) {
-            const leadingTextNode = document.createTextNode(before);
+            leadingTextNode = document.createTextNode(before);
             scannerCreatedNodes.add(leadingTextNode);
             fragment.appendChild(leadingTextNode);
         }
@@ -1301,6 +1482,14 @@ var PageScanner = (() => {
             fadeOutSpanInfo: getNodeDebugInfo(fadeOutSpan),
             replaceOpId,
         })));
+
+        // `textNode` is detached now, but the site may still hold a reference to
+        // it and write the recalculated price into it later.
+        const origin = activeOrigin || textNode;
+        const originGroup = originGroups.get(origin) || { lastText: origin.nodeValue };
+        originGroup.nodes = [leadingTextNode, fadeOutSpan, trailingTextNode].filter(Boolean);
+        originGroup.span = fadeOutSpan;
+        watchOriginTextNode(origin, originGroup);
 
         // After fade-out animation completes, swap to converted value with fade-in
         onAnimationOrNow(fadeOutSpan, () => {
@@ -1386,6 +1575,13 @@ var PageScanner = (() => {
             );
 
             if (swapSuccess) {
+                const liveGroup = originGroups.get(origin);
+                if (liveGroup?.span === fadeOutSpan) {
+                    liveGroup.nodes = liveGroup.nodes.map(
+                        node => (node === fadeOutSpan ? span : node),
+                    );
+                    liveGroup.span = span;
+                }
                 debugLog('animationend', 'Swap successful', createDebugData(() => ({
                     newSpanInfo: getNodeDebugInfo(span),
                     replaceOpId
@@ -1397,6 +1593,165 @@ var PageScanner = (() => {
 
         debugLog('replaceInTextNode', 'Replacement setup complete', { replaceOpId });
         return trailingTextNode;
+    }
+
+    function observeOrigin(node, callback) {
+        const observer = new MutationObserver(callback);
+        observer.observe(node, { characterData: true });
+        originObservers.add(observer);
+        return observer;
+    }
+
+    function disconnectOriginObservers() {
+        for (const observer of originObservers) {
+            observer.disconnect();
+        }
+        originObservers.clear();
+    }
+
+    /**
+     * Track a detached page-owned text node so late writes to it are noticed.
+     */
+    function watchOriginTextNode(origin, group) {
+        originGroups.set(origin, group);
+        if (group.observer) return;
+        group.observer = observeOrigin(origin, () => onOriginTextChanged(origin));
+    }
+
+    /**
+     * The site rewrote a value we had already converted. Re-render from the new
+     * text, or hand the spot back to the site if it no longer holds a price.
+     */
+    function onOriginTextChanged(origin) {
+        const group = originGroups.get(origin);
+        if (!group) return;
+
+        const newText = origin.nodeValue;
+        if (newText === group.lastText) return;
+        group.lastText = newText;
+
+        const anchor = group.nodes.find(node => node?.parentNode);
+        if (!anchor) {
+            group.observer?.disconnect();
+            originObservers.delete(group.observer);
+            originGroups.delete(origin);
+            return;
+        }
+
+        const parent = anchor.parentNode;
+        const refreshed = document.createTextNode(newText);
+        parent.insertBefore(refreshed, anchor);
+        for (const node of group.nodes) {
+            if (node?.parentNode) node.parentNode.removeChild(node);
+        }
+
+        // If nothing convertible remains, `refreshed` stays as the site's own
+        // text: the native value, never a stale converted one.
+        group.nodes = [refreshed];
+        group.span = null;
+        replacementCount = Math.max(0, replacementCount - 1);
+
+        activeOrigin = origin;
+        try {
+            processTextNode(refreshed);
+        } finally {
+            activeOrigin = null;
+        }
+    }
+
+    /**
+     * Composite elements lose every child to `textContent = ...`. Keep the
+     * child text nodes so the element's original text can be rebuilt from them
+     * whenever the site writes to any one of them.
+     */
+    function watchCompositeOrigins(element, textNodes) {
+        if (!textNodes.length) return;
+
+        const state = {
+            nodes: textNodes,
+            lastText: textNodes.map(node => node.nodeValue).join(''),
+            observers: [],
+        };
+        for (const node of textNodes) {
+            state.observers.push(
+                observeOrigin(node, () => onCompositeOriginChanged(element, state)),
+            );
+        }
+        compositeOrigins.set(element, state);
+    }
+
+    function onCompositeOriginChanged(element, state) {
+        const rebuilt = state.nodes.map(node => node.nodeValue).join('');
+        if (rebuilt === state.lastText) return;
+        state.lastText = rebuilt;
+
+        if (!isNodeConnected(element)) {
+            releaseCompositeElement(element);
+            return;
+        }
+
+        const text = rebuilt.trim();
+        const detection = detectCompositeCurrency(text);
+        const fromCurrency = detection && isFocusedPriceText(text, detection)
+            ? resolveDetectedCurrency(detection, settings, null)
+            : null;
+        const convertedAmount = fromCurrency && fromCurrency !== settings.targetCurrency
+            ? convertCurrencyLocal(detection.amount, fromCurrency, settings.targetCurrency)
+            : null;
+
+        if (convertedAmount === null) {
+            releaseCompositeElement(element, rebuilt);
+            return;
+        }
+
+        element.dataset.original = text;
+        element.dataset.fromCurrency = fromCurrency;
+        element.title = formatOriginalTitle(text, fromCurrency);
+        // The markup snapshot describes a layout the site has since replaced.
+        delete element.dataset.originalHtml;
+
+        const refreshed = [
+            text.slice(0, detection.start),
+            formatReplacement(
+                convertedAmount,
+                settings.targetCurrency,
+                detection.negativeStyle,
+                detection.compact,
+            ),
+            text.slice(detection.end),
+        ].join('');
+        element.textContent = refreshed;
+        compositeRendered.set(element, refreshed);
+    }
+
+    /**
+     * Stop owning a composite element and drop the markers that describe our
+     * conversion, so no stale "Original: ..." label outlives the value it
+     * described. Pass `restoreText` to put the site's own text back.
+     */
+    function releaseCompositeElement(element, restoreText = null) {
+        const state = compositeOrigins.get(element);
+        if (state) {
+            for (const observer of state.observers) {
+                observer.disconnect();
+                originObservers.delete(observer);
+            }
+            compositeOrigins.delete(element);
+        }
+        compositeRendered.delete(element);
+
+        if (typeof restoreText === 'string' && isNodeConnected(element)) {
+            element.textContent = restoreText;
+        }
+
+        element.classList.remove(REPLACED_CLASS);
+        element.classList.remove('cc-no-animation');
+        element.removeAttribute('title');
+        element.style.fontSize = '';
+        delete element.dataset.original;
+        delete element.dataset.originalHtml;
+        delete element.dataset.fromCurrency;
+        replacementCount = Math.max(0, replacementCount - 1);
     }
 
     /**
@@ -1452,6 +1807,8 @@ var PageScanner = (() => {
         // 4. Fallback if layout broke
         if (lineJumped || wrapped || overflows) {
             const ratio = originalRect.width / newRect.width;
+            if (ratio >= 1) return;
+
             const computedStyle = window.getComputedStyle(element);
             const currentFontSize = parseFloat(computedStyle.fontSize) || 14;
 
@@ -1516,6 +1873,7 @@ var PageScanner = (() => {
      */
     function restoreAll() {
         debugLog('restoreAll', 'Starting restore of all replaced elements');
+        disconnectOriginObservers();
         const observedShadowRoots = Array.from(observers.keys())
             .filter(root => root !== document.body);
         const roots = [document, ...observedShadowRoots];
@@ -1608,6 +1966,20 @@ var PageScanner = (() => {
 
             for (const mutation of mutations) {
                 if (mutation.type === 'childList') {
+                    // The site rewrote a row we had converted. Give the row back
+                    // before its old "Original: ..." label outlives the value it
+                    // described, then let it be scanned again from scratch.
+                    const target = mutation.target;
+                    if (
+                        target?.nodeType === Node.ELEMENT_NODE &&
+                        compositeRendered.has(target) &&
+                        target.textContent !== compositeRendered.get(target)
+                    ) {
+                        releaseCompositeElement(target);
+                        pendingNodes.add(target);
+                        addedCount++;
+                    }
+
                     if (DEBUG_MODE) {
                         for (const node of mutation.removedNodes) {
                             removedCount++;

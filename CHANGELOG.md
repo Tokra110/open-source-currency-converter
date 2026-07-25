@@ -7,6 +7,14 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.3.1] - 2026-07-25
+
+### Fixed
+
+- Kept converted prices in step with sites that recalculate them after the page has loaded, such as a checkout updating shipping once an address is entered.
+- Fell back to the site's own price whenever a recalculated value can no longer be converted, so a stale converted amount is never left on screen.
+- Cleared the hover label describing the original amount when a site replaces a row we had already converted.
+
 ## [1.3.0] - 2026-07-25
 
 ### Added
@@ -28,5 +36,6 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Improved currency detection when nearby context disambiguates a symbol or refund amount.
 - Fixed scanning and updates inside connected shadow roots and embedded pages.
 
-[Unreleased]: https://github.com/Tokra110/open-source-currency-converter/compare/v1.3.0...HEAD
+[Unreleased]: https://github.com/Tokra110/open-source-currency-converter/compare/v1.3.1...HEAD
+[1.3.1]: https://github.com/Tokra110/open-source-currency-converter/compare/v1.3.0...v1.3.1
 [1.3.0]: https://github.com/Tokra110/open-source-currency-converter/releases/tag/v1.3.0

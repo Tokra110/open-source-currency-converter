@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Page scanner integration fixture</title>
+  <link rel="stylesheet" href="../src/content/page-scanner.css">
+</head>
+<body>
+  <main>
+    <section>
+      <article>
+        <h2>Example item A</h2>
+        <p class="product-price">$10.00 CAD</p>
+        <p class="line-total">$10.00</p>
+      </article>
+      <article>
+        <h2>Example item B</h2>
+        <p class="product-price">$20.00 CAD</p>
+        <p class="line-total">$20.00</p>
+      </article>
+    </section>
+    <aside>
+      <h2>Subtotal</h2>
+      <p class="subtotal-price">$30.00 CAD</p>
+    </aside>
+    <article>
+      <h2>Split price item</h2>
+      <div style="width: 240px">
+        <span
+          id="split-price-container"
+          class="split-price split-price--decimal-super-aligned"
+        ><span aria-hidden="true"><span class="split-price__nowrap"><span
+          class="split-price__currency"
+        >$</span><span class="split-price__integer">40</span></span><span
+          class="split-price__decimal"
+        ><span class="split-price__separator">.</span>99</span></span><span
+          class="split-price__sr-text"
+        >Price $ 40.99</span></span>
+      </div>
+    </article>
+    <article>
+      <h2>Split usage rates</h2>
+      <div id="split-symbol-rate">
+        <span>$</span><span>5</span><span> / MTok</span>
+      </div>
+      <div id="split-code-rate">
+        <span>5</span><span> EUR</span><span> / MTok</span>
+      </div>
+    </article>
+    <article>
+      <h2>Recalculated after conversion</h2>
+      <!-- The site keeps a reference to the text node and writes to it later. -->
+      <p class="line-total" id="recalc-plain">$10.00</p>
+      <p class="price-row" id="recalc-composite"><span>$10.00</span></p>
+      <!-- The recalculated value is no longer a price at all. -->
+      <p class="line-total" id="recalc-gone">$10.00</p>
+      <!-- The site rewrites the row we converted, in place. -->
+      <p class="price-row" id="recalc-overwrite">$10.00</p>
+    </article>
+  </main>
+
+  <script src="../src/shared/constants.js"></script>
+  <script src="../src/content/currency-detector.js"></script>
+  <script src="../src/content/page-scanner.js"></script>
+  <script>
+    // Captured before the scan, the way a page framework holds on to the text
+    // nodes it rendered. The scanner detaches these while converting.
+    const retainedNodes = {
+      plain: document.getElementById('recalc-plain').firstChild,
+      composite: document.getElementById('recalc-composite').firstChild.firstChild,
+      gone: document.getElementById('recalc-gone').firstChild,
+    };
+
+    PageScanner.init(
+      {
+        ...DEFAULT_SETTINGS,
+        targetCurrency: 'HUF',
+        defaultDollarCurrency: 'USD',
+        conversionMode: 'auto',
+        disableAnimations: false,
+      },
+      {
+        EUR: 1,
+        USD: 1.1,
+        CAD: 1.6,
+        HUF: 360,
+      },
+    );
+
+    const recalcIds = [
+      'recalc-plain',
+      'recalc-composite',
+      'recalc-gone',
+      'recalc-overwrite',
+    ];
+    const converted = () => recalcIds.every(
+      id => document.getElementById(id).textContent.includes('Ft'),
+    );
+
+    function waitFor(predicate, attemptsLeft, next) {
+      if (predicate() || attemptsLeft <= 0) return next();
+      setTimeout(() => waitFor(predicate, attemptsLeft - 1, next), 25);
+    }
+
+    // Once every row is converted, recalculate them the way a checkout would.
+    waitFor(converted, 200, () => {
+      retainedNodes.plain.nodeValue = '$25.00';
+      retainedNodes.composite.nodeValue = '$25.00';
+      retainedNodes.gone.nodeValue = 'Calculated at next step';
+      document.getElementById('recalc-overwrite').textContent = '$25.00';
+    });
+  </script>
+</body>
+</html>
