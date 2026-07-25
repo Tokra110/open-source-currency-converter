@@ -19,7 +19,17 @@ var PageScanner = (() => {
     const compositeOrigins = new WeakMap();
     const compositeRendered = new WeakMap();
     const originObservers = new Set();
+    // A loading page can rewrite the same price many times in a few hundred
+    // milliseconds. Refreshes are collected here and applied once the writes
+    // stop, so the reader sees one settled value instead of every intermediate.
+    const pendingOriginRefreshes = new Set();
+    const pendingCompositeRefreshes = new Set();
+    let originRefreshTimer = null;
+    let originRefreshFirstAt = 0;
     let activeOrigin = null;
+    // A refresh replaces a value the reader has already seen converted, so it
+    // swaps silently. Only the first conversion of a price is worth animating.
+    let silentUpdate = false;
     let scanWork = [];
     let scheduledScanWork = null;
     let scanStartedAt = 0;
@@ -106,7 +116,7 @@ var PageScanner = (() => {
     }
 
     function shouldAnimate(config = settings) {
-        return !config?.disableAnimations;
+        return !silentUpdate && !config?.disableAnimations;
     }
 
     function onAnimationOrNow(element, callback, config = settings) {
@@ -1239,6 +1249,20 @@ var PageScanner = (() => {
      * Process a single text node, replacing any detected currencies.
      */
     function processTextNode(textNode) {
+        // Every price found here is carved out of the same page-owned text
+        // node, so they all belong to one group. Without this the second price
+        // would form its own group keyed on a node the site cannot see, and a
+        // later recalculation would leave it stranded beside the new value.
+        const previousOrigin = activeOrigin;
+        activeOrigin = activeOrigin || textNode;
+        try {
+            processTextNodeDetections(textNode);
+        } finally {
+            activeOrigin = previousOrigin;
+        }
+    }
+
+    function processTextNodeDetections(textNode) {
         let currentTextNode = textNode;
         let searchStart = 0;
         let detectionsProcessed = 0;
@@ -1486,9 +1510,18 @@ var PageScanner = (() => {
         // `textNode` is detached now, but the site may still hold a reference to
         // it and write the recalculated price into it later.
         const origin = activeOrigin || textNode;
-        const originGroup = originGroups.get(origin) || { lastText: origin.nodeValue };
-        originGroup.nodes = [leadingTextNode, fadeOutSpan, trailingTextNode].filter(Boolean);
-        originGroup.span = fadeOutSpan;
+        const originGroup = originGroups.get(origin) || { lastText: origin.nodeValue, nodes: [] };
+        const replacementNodes = [leadingTextNode, fadeOutSpan, trailingTextNode].filter(Boolean);
+        // One text node can hold several prices. Each is carved out of the
+        // trailing remainder of the previous one, so the group has to own every
+        // piece, not just the last: a refresh must not leave an earlier
+        // conversion stranded beside the new one.
+        const replacedAt = originGroup.nodes.indexOf(textNode);
+        if (replacedAt === -1) {
+            originGroup.nodes = replacementNodes;
+        } else {
+            originGroup.nodes.splice(replacedAt, 1, ...replacementNodes);
+        }
         watchOriginTextNode(origin, originGroup);
 
         // After fade-out animation completes, swap to converted value with fade-in
@@ -1576,11 +1609,9 @@ var PageScanner = (() => {
 
             if (swapSuccess) {
                 const liveGroup = originGroups.get(origin);
-                if (liveGroup?.span === fadeOutSpan) {
-                    liveGroup.nodes = liveGroup.nodes.map(
-                        node => (node === fadeOutSpan ? span : node),
-                    );
-                    liveGroup.span = span;
+                const swappedAt = liveGroup ? liveGroup.nodes.indexOf(fadeOutSpan) : -1;
+                if (swappedAt !== -1) {
+                    liveGroup.nodes[swappedAt] = span;
                 }
                 debugLog('animationend', 'Swap successful', createDebugData(() => ({
                     newSpanInfo: getNodeDebugInfo(span),
@@ -1607,6 +1638,48 @@ var PageScanner = (() => {
             observer.disconnect();
         }
         originObservers.clear();
+        pendingOriginRefreshes.clear();
+        pendingCompositeRefreshes.clear();
+        if (originRefreshTimer) clearTimeout(originRefreshTimer);
+        originRefreshTimer = null;
+        originRefreshFirstAt = 0;
+    }
+
+    /**
+     * Wait for the writes to stop before re-rendering. A page that settles a
+     * price through a dozen intermediate values should cost one update, not a
+     * dozen, and the reader should never watch it flicker through them.
+     */
+    function scheduleOriginRefresh() {
+        const now = Date.now();
+        if (!originRefreshFirstAt) originRefreshFirstAt = now;
+        if (originRefreshTimer) clearTimeout(originRefreshTimer);
+
+        const maxWaitRemaining = Math.max(
+            0,
+            MUTATION_MAX_WAIT_MS - (now - originRefreshFirstAt),
+        );
+        const delay = Math.min(MUTATION_DEBOUNCE_MS, maxWaitRemaining);
+        originRefreshTimer = setTimeout(flushOriginRefreshes, delay);
+    }
+
+    function flushOriginRefreshes() {
+        originRefreshTimer = null;
+        originRefreshFirstAt = 0;
+
+        const origins = Array.from(pendingOriginRefreshes);
+        const elements = Array.from(pendingCompositeRefreshes);
+        pendingOriginRefreshes.clear();
+        pendingCompositeRefreshes.clear();
+        if (!isEnabled) return;
+
+        silentUpdate = true;
+        try {
+            for (const origin of origins) refreshOriginGroup(origin);
+            for (const element of elements) refreshCompositeElement(element);
+        } finally {
+            silentUpdate = false;
+        }
     }
 
     /**
@@ -1615,17 +1688,23 @@ var PageScanner = (() => {
     function watchOriginTextNode(origin, group) {
         originGroups.set(origin, group);
         if (group.observer) return;
-        group.observer = observeOrigin(origin, () => onOriginTextChanged(origin));
+        group.observer = observeOrigin(origin, () => {
+            pendingOriginRefreshes.add(origin);
+            scheduleOriginRefresh();
+        });
     }
 
     /**
      * The site rewrote a value we had already converted. Re-render from the new
      * text, or hand the spot back to the site if it no longer holds a price.
      */
-    function onOriginTextChanged(origin) {
+    function refreshOriginGroup(origin) {
         const group = originGroups.get(origin);
         if (!group) return;
 
+        // Read at flush time, not per write: whatever the page settled on is
+        // the only value worth rendering. A burst that ends where it started
+        // costs nothing at all.
         const newText = origin.nodeValue;
         if (newText === group.lastText) return;
         group.lastText = newText;
@@ -1647,9 +1726,11 @@ var PageScanner = (() => {
 
         // If nothing convertible remains, `refreshed` stays as the site's own
         // text: the native value, never a stale converted one.
+        const removedSpans = group.nodes.filter(
+            node => node?.nodeType === Node.ELEMENT_NODE,
+        ).length;
         group.nodes = [refreshed];
-        group.span = null;
-        replacementCount = Math.max(0, replacementCount - 1);
+        replacementCount = Math.max(0, replacementCount - removedSpans);
 
         activeOrigin = origin;
         try {
@@ -1674,13 +1755,19 @@ var PageScanner = (() => {
         };
         for (const node of textNodes) {
             state.observers.push(
-                observeOrigin(node, () => onCompositeOriginChanged(element, state)),
+                observeOrigin(node, () => {
+                    pendingCompositeRefreshes.add(element);
+                    scheduleOriginRefresh();
+                }),
             );
         }
         compositeOrigins.set(element, state);
     }
 
-    function onCompositeOriginChanged(element, state) {
+    function refreshCompositeElement(element) {
+        const state = compositeOrigins.get(element);
+        if (!state) return;
+
         const rebuilt = state.nodes.map(node => node.nodeValue).join('');
         if (rebuilt === state.lastText) return;
         state.lastText = rebuilt;
