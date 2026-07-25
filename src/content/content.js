@@ -7,6 +7,13 @@
   let debounceTimer = null;
   let lastDetection = null;
   let currentTheme = DEFAULT_SETTINGS.theme;
+  let settingsCache = null;
+  let settingsLoadPromise = null;
+  let settingsCacheVersion = 0;
+  let scannerRates = null;
+  let scannerInitialized = false;
+  let scannerUpdateVersion = 0;
+  const siteHostname = getSiteHostname(window.location);
 
   // Load initial theme setting
   getSettings().then(s => { currentTheme = s.theme; });
@@ -52,8 +59,8 @@
 
     const settings = await getSettings();
 
-    // Check Global Toggle + Interactive Mode
-    if (!settings.extensionEnabled || settings.conversionMode !== 'interactive') {
+    // Selection tooltips are available in both Interactive and Hybrid modes.
+    if (!settings.extensionEnabled) {
       lastDetection = null;
       return;
     }
@@ -80,13 +87,38 @@
   }
 
   async function getSettings() {
-    try {
-      const result = await chrome.storage.sync.get(STORAGE_KEYS.SETTINGS);
-      return { ...DEFAULT_SETTINGS, ...(result[STORAGE_KEYS.SETTINGS] || {}) };
-    } catch (err) {
-      console.warn('[OpenSourceCurrencyConverter] Failed to load settings:', err);
-      return DEFAULT_SETTINGS;
-    }
+    if (settingsCache) return settingsCache;
+    if (settingsLoadPromise) return settingsLoadPromise;
+
+    const loadVersion = settingsCacheVersion;
+    let loadPromise;
+    loadPromise = chrome.storage.sync.get(STORAGE_KEYS.SETTINGS)
+      .then((result) => {
+        const loadedSettings = {
+          ...DEFAULT_SETTINGS,
+          ...(result[STORAGE_KEYS.SETTINGS] || {}),
+        };
+        if (loadVersion === settingsCacheVersion) {
+          settingsCache = loadedSettings;
+        }
+        return settingsCache || loadedSettings;
+      })
+      .catch((err) => {
+        console.warn('[OpenSourceCurrencyConverter] Failed to load settings:', err);
+        const fallbackSettings = { ...DEFAULT_SETTINGS };
+        if (loadVersion === settingsCacheVersion) {
+          settingsCache = fallbackSettings;
+        }
+        return settingsCache || fallbackSettings;
+      })
+      .finally(() => {
+        if (settingsLoadPromise === loadPromise) {
+          settingsLoadPromise = null;
+        }
+      });
+
+    settingsLoadPromise = loadPromise;
+    return loadPromise;
   }
 
   function sendMessage(msg) {
@@ -101,21 +133,38 @@
 
   /**
    * Initialize the page scanner.
-   * Requests rates from service worker and passes them to the scanner.
-   * Scanner itself checks if it should be enabled based on settings.
+   * Loads rates only when Hybrid scanning is active for this site.
    */
   async function initPageScanner() {
     const settings = await getSettings();
-    // We pass settings regardless; PageScanner determines if it runs.
+    await applyPageScannerSettings(settings);
+  }
 
-    try {
-      const response = await chrome.runtime.sendMessage({ type: 'get-rates' });
-      if (response && response.rates) {
-        PageScanner.init(settings, response.rates);
+  async function applyPageScannerSettings(settings) {
+    const updateVersion = ++scannerUpdateVersion;
+    const needsRates = shouldLoadPageScannerRates(settings, siteHostname);
+
+    if (needsRates && !scannerRates) {
+      try {
+        const response = await chrome.runtime.sendMessage({ type: 'get-rates' });
+        if (response?.rates) {
+          scannerRates = response.rates;
+        }
+      } catch (err) {
+        console.warn('[OpenSourceCurrencyConverter] Failed to load scanner rates:', err);
       }
-    } catch (err) {
-      console.warn('[OpenSourceCurrencyConverter] Failed to init page scanner:', err);
     }
+
+    if (updateVersion !== scannerUpdateVersion) return;
+    if (needsRates && !scannerRates) return;
+
+    const ratesForSettings = needsRates ? scannerRates : null;
+    if (!scannerInitialized) {
+      PageScanner.init(settings, ratesForSettings);
+      scannerInitialized = true;
+      return;
+    }
+    PageScanner.updateSettings(settings, ratesForSettings);
   }
 
   // Initialize scanner on page load
@@ -124,7 +173,13 @@
   // Re-initialize scanner when settings change
   chrome.storage.onChanged.addListener(async (changes, area) => {
     if (area === 'sync' && changes[STORAGE_KEYS.SETTINGS]) {
-      const newSettings = changes[STORAGE_KEYS.SETTINGS].newValue || {};
+      const newSettings = {
+        ...DEFAULT_SETTINGS,
+        ...(changes[STORAGE_KEYS.SETTINGS].newValue || {}),
+      };
+      settingsCache = newSettings;
+      settingsCacheVersion++;
+      settingsLoadPromise = null;
 
       // Check if current site status changed
       const oldDisabled = isSiteDisabled({ ...DEFAULT_SETTINGS, ...(changes[STORAGE_KEYS.SETTINGS].oldValue || {}) });
@@ -157,20 +212,12 @@
         }
       }
 
-      // Update page scanner
-      try {
-        const response = await chrome.runtime.sendMessage({ type: 'get-rates' });
-        if (response && response.rates) {
-          PageScanner.updateSettings(newSettings, response.rates);
-        }
-      } catch {
-        // Extension context may be invalidated
-      }
+      await applyPageScannerSettings(newSettings);
     }
   });
 
   function isSiteDisabled(settings) {
     if (!settings.disabledDomains) return false;
-    return settings.disabledDomains.includes(window.location.hostname);
+    return settings.disabledDomains.includes(siteHostname);
   }
 })();

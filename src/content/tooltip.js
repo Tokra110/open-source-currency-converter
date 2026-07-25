@@ -26,18 +26,32 @@ var CurrencyTooltip = (() => {
   /**
    * Format a numeric amount for display.
    */
-  function formatCurrency(amount, currencyCode) {
-    if (typeof amount !== 'number' || !isFinite(amount)) return String(amount);
+  function formatCurrency(amount, currencyCode, outputFormat = 'smart', compact = null) {
+    return formatCompactCurrencyAmount(amount, currencyCode, compact, outputFormat);
+  }
 
-    let digits = 2;
-    if (currencyCode && ZERO_DECIMAL_CURRENCIES && ZERO_DECIMAL_CURRENCIES.includes(currencyCode)) {
-      digits = 0;
+  function formatCurrencyLabel(amount, currencyCode, outputFormat, negativeStyle, compact) {
+    const value = negativeStyle === 'parentheses' ? Math.abs(amount) : amount;
+    const label = `${formatCurrency(value, currencyCode, outputFormat, compact)} ${currencyCode}`;
+    return negativeStyle === 'parentheses' ? `(${label})` : label;
+  }
+
+  async function copyValue(data) {
+    if (!data || !navigator.clipboard?.writeText) return false;
+
+    const formatted = formatCurrencyLabel(
+      data.convertedAmount,
+      data.targetCurrency,
+      data.outputFormat,
+      data.negativeStyle,
+      data.compact,
+    );
+    try {
+      await navigator.clipboard.writeText(formatted);
+      return true;
+    } catch {
+      return false;
     }
-
-    return amount.toLocaleString(undefined, {
-      minimumFractionDigits: digits,
-      maximumFractionDigits: digits,
-    });
   }
 
   /**
@@ -68,6 +82,10 @@ var CurrencyTooltip = (() => {
     if (theme === 'light') return 'light';
     if (theme === 'dark') return 'dark';
     return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+  }
+
+  function shouldAnimate(data = state.data) {
+    return !data?.disableAnimations;
   }
 
   /**
@@ -120,7 +138,21 @@ var CurrencyTooltip = (() => {
    * Uses event delegation so listeners survive DOM replacements in update().
    */
   function attachDelegatedPillListeners(tooltip) {
-    tooltip.addEventListener('click', (e) => {
+    tooltip.addEventListener('click', async (e) => {
+      const copyButton = e.target.closest('.cc-copy-button');
+      if (copyButton) {
+        e.stopPropagation();
+        const copied = await copyValue(state.data);
+        copyButton.textContent = copied ? 'Copied' : 'Copy failed';
+        copyButton.setAttribute('aria-label', copied ? 'Converted value copied' : 'Could not copy converted value');
+        setTimeout(() => {
+          if (!copyButton.isConnected) return;
+          copyButton.textContent = 'Copy';
+          copyButton.setAttribute('aria-label', 'Copy converted value');
+        }, TIMING.COPY_DISPLAY_MS);
+        return;
+      }
+
       const pill = e.target.closest('.cc-currency-pill');
       if (!pill) return;
       if (pill.classList.contains('active')) return;
@@ -137,6 +169,10 @@ var CurrencyTooltip = (() => {
             amount: currentData.originalAmount,
             fromCurrency: newCurrency,
             targetCurrency: currentData.targetCurrency,
+            outputFormat: currentData.outputFormat,
+            disableAnimations: currentData.disableAnimations,
+            negativeStyle: currentData.negativeStyle,
+            compact: currentData.compact,
             originalSymbol: currentData.originalSymbol,
             possibleCurrencies: currentData.possibleCurrencies,
           }
@@ -157,7 +193,7 @@ var CurrencyTooltip = (() => {
     });
 
     tooltip.addEventListener('mousedown', (e) => {
-      if (e.target.closest('.cc-currency-pill')) e.stopPropagation();
+      if (e.target.closest('.cc-currency-pill, .cc-copy-button')) e.stopPropagation();
     });
 
     // Keyboard activation for pills (Enter/Space)
@@ -188,11 +224,21 @@ var CurrencyTooltip = (() => {
 
     // Update state
     state.data = data;
-    state.formattedAmount = formatCurrency(data.convertedAmount, data.targetCurrency);
-    const originalFormatted = formatCurrency(data.originalAmount, data.originalCurrency);
-
-    const displayText = `${state.formattedAmount} ${escapeHtml(data.targetCurrency)}`;
-    const originalText = `${originalFormatted} ${escapeHtml(data.originalCurrency)}`;
+    state.formattedAmount = formatCurrencyLabel(
+      data.convertedAmount,
+      data.targetCurrency,
+      data.outputFormat,
+      data.negativeStyle,
+      data.compact,
+    );
+    const originalText = formatCurrencyLabel(
+      data.originalAmount,
+      data.originalCurrency,
+      data.outputFormat,
+      data.negativeStyle,
+      data.compact,
+    );
+    const displayText = escapeHtml(state.formattedAmount);
 
     let headerHtml = `<span class="cc-label">Converted:</span>`;
     if (data.possibleCurrencies && data.possibleCurrencies.length > 1) {
@@ -207,8 +253,9 @@ var CurrencyTooltip = (() => {
     }
 
     tooltip.classList.add(`cc-theme-${resolveTheme(theme)}`);
+    tooltip.classList.toggle('cc-no-animations', !shouldAnimate(data));
     tooltip.setAttribute('role', 'tooltip');
-    tooltip.setAttribute('aria-label', `Converted: ${state.formattedAmount} ${data.targetCurrency}`);
+    tooltip.setAttribute('aria-label', `Converted: ${state.formattedAmount}`);
 
     tooltip.innerHTML = `
       <div class="cc-tooltip-content">
@@ -217,6 +264,7 @@ var CurrencyTooltip = (() => {
         <div class="cc-value-container">
           <span class="cc-value">${displayText}</span>
         </div>
+        <button type="button" class="cc-copy-button" aria-label="Copy converted value">Copy</button>
       </div>
     `;
 
@@ -256,8 +304,15 @@ var CurrencyTooltip = (() => {
 
     // Update state
     state.data = data;
-    state.formattedAmount = formatCurrency(data.convertedAmount, data.targetCurrency);
-    state.element.setAttribute('aria-label', `Converted: ${state.formattedAmount} ${data.targetCurrency}`);
+    state.formattedAmount = formatCurrencyLabel(
+      data.convertedAmount,
+      data.targetCurrency,
+      data.outputFormat,
+      data.negativeStyle,
+      data.compact,
+    );
+    state.element.setAttribute('aria-label', `Converted: ${state.formattedAmount}`);
+    state.element.classList.toggle('cc-no-animations', !shouldAnimate(data));
 
     // Update pills
     if (data.possibleCurrencies && data.possibleCurrencies.length > 1) {
@@ -275,14 +330,20 @@ var CurrencyTooltip = (() => {
     }
 
     // Update original value
-    const originalFormatted = formatCurrency(data.originalAmount, data.originalCurrency);
+    const originalFormatted = formatCurrencyLabel(
+      data.originalAmount,
+      data.originalCurrency,
+      data.outputFormat,
+      data.negativeStyle,
+      data.compact,
+    );
     const originalValueEl = state.element.querySelector('.cc-original-value');
     if (originalValueEl) {
-      originalValueEl.textContent = `${originalFormatted} ${data.originalCurrency}`;
+      originalValueEl.textContent = originalFormatted;
     }
 
     // Animate value transition
-    const newText = `${state.formattedAmount} ${data.targetCurrency}`;
+    const newText = state.formattedAmount;
     const valueContainer = state.element.querySelector('.cc-value-container');
     if (!valueContainer) return;
 
@@ -290,6 +351,14 @@ var CurrencyTooltip = (() => {
     const oldValueEl = valueContainer.querySelector('.cc-value:not(.cc-value-exit)');
 
     if (oldValueEl && oldValueEl.textContent === newText) return;
+
+    if (!shouldAnimate(data)) {
+      const immediateValueEl = document.createElement('span');
+      immediateValueEl.className = 'cc-value cc-value-active';
+      immediateValueEl.textContent = newText;
+      valueContainer.replaceChildren(immediateValueEl);
+      return;
+    }
 
     // Immediately remove any elements already in exit state to prevent accumulation
     existingValues.forEach(el => {
@@ -339,5 +408,5 @@ var CurrencyTooltip = (() => {
     return !!state.element;
   }
 
-  return { show, update, remove, isVisible };
+  return { show, update, remove, isVisible, copyValue, shouldAnimate };
 })();
