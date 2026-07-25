@@ -37,6 +37,12 @@
   transform: translate(-50%, 0%) scale(1.02);
 }
 
+#currency-converter-tooltip.cc-no-animations,
+#currency-converter-tooltip.cc-no-animations * {
+  animation: none !important;
+  transition: none !important;
+}
+
 .cc-tooltip-content {
   display: flex;
   flex-direction: column;
@@ -50,6 +56,29 @@
   margin-top: 4px;
   font-weight: 500;
   letter-spacing: 0.3px;
+}
+
+.cc-copy-button {
+  appearance: none;
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.1);
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+  font-size: 11px;
+  font-weight: 600;
+  min-height: 28px;
+  padding: 4px 10px;
+}
+
+.cc-copy-button:hover {
+  background: rgba(255, 255, 255, 0.18);
+}
+
+.cc-copy-button:focus-visible {
+  outline: 2px solid currentColor;
+  outline-offset: 2px;
 }
 
 .cc-label {
@@ -191,6 +220,11 @@
 
 #currency-converter-tooltip.cc-theme-light .cc-currency-list {
   background: rgba(0, 0, 0, 0.06);
+}
+
+#currency-converter-tooltip.cc-theme-light .cc-copy-button {
+  background: rgba(0, 0, 0, 0.05);
+  border-color: rgba(0, 0, 0, 0.15);
 }
 
 #currency-converter-tooltip.cc-theme-light .cc-currency-pill:hover {

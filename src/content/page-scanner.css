@@ -36,3 +36,7 @@
     display: inline-block;
     animation: cc-fade-in 0.3s ease-out forwards;
 }
+
+.cc-auto-replaced.cc-no-animation {
+    animation: none;
+}

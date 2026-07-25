@@ -116,6 +116,27 @@ var CURRENCY_NAMES = {
   ZAR: 'South African rand',
 };
 
+function filterCurrencyCodes(query, currencyNames = CURRENCY_NAMES) {
+  const normalizedQuery = String(query || '').trim().toLowerCase();
+  return Object.keys(currencyNames)
+    .filter((code) => {
+      if (!normalizedQuery) return true;
+      return code.toLowerCase().includes(normalizedQuery) ||
+        currencyNames[code].toLowerCase().includes(normalizedQuery);
+    })
+    .sort();
+}
+
+function getCurrencySearchState(query, selectedCode, currencyNames = CURRENCY_NAMES) {
+  const codes = filterCurrencyCodes(query, currencyNames);
+  const autoSelectedCode = codes.length === 1 ? codes[0] : null;
+  return {
+    codes,
+    selectedCode: autoSelectedCode || (codes.includes(selectedCode) ? selectedCode : ''),
+    autoSelectedCode,
+  };
+}
+
 var CURRENCY_CODE_TO_SYMBOL = {
   USD: '$',
   EUR: '€',
@@ -157,6 +178,37 @@ var ECB_CURRENCIES = Object.keys(CURRENCY_NAMES);
 // Currencies that typically don't use decimal places (or have very low unit value)
 var ZERO_DECIMAL_CURRENCIES = ['HUF', 'JPY', 'KRW', 'IDR', 'ISK'];
 
+function resolveOutputLocale(outputFormat, browserLocale) {
+  if (outputFormat === 'us') return 'en-US';
+  if (outputFormat === 'eu') return 'de-DE';
+  return browserLocale;
+}
+
+function formatCurrencyAmount(amount, currencyCode, outputFormat = 'smart', browserLocale) {
+  if (typeof amount !== 'number' || !Number.isFinite(amount)) return String(amount);
+
+  const digits = ZERO_DECIMAL_CURRENCIES.includes(currencyCode) ? 0 : 2;
+  const locale = resolveOutputLocale(outputFormat, browserLocale);
+  return new Intl.NumberFormat(locale, {
+    minimumFractionDigits: digits,
+    maximumFractionDigits: digits,
+  }).format(amount);
+}
+
+function formatCompactCurrencyAmount(amount, currencyCode, compact, outputFormat = 'smart', browserLocale) {
+  if (!compact?.multiplier || !compact.label) {
+    return formatCurrencyAmount(amount, currencyCode, outputFormat, browserLocale);
+  }
+
+  const locale = resolveOutputLocale(outputFormat, browserLocale);
+  const scaledAmount = amount / compact.multiplier;
+  const formatted = new Intl.NumberFormat(locale, {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 2,
+  }).format(scaledAmount);
+  return `${formatted}${compact.label}`;
+}
+
 
 var TIMING = {
   DEBOUNCE_MS: 300,
@@ -184,12 +236,34 @@ var DEFAULT_SETTINGS = {
   defaultKrCurrency: 'SEK', // Default for generic 'kr'
   defaultFrCurrency: 'CHF', // Default for generic 'Fr'
   numberFormat: 'auto', // 'auto', 'us', 'eu'
+  outputFormat: 'smart', // 'smart' follows browser locale; 'us' and 'eu' are explicit
   extensionEnabled: true, // Master toggle
   conversionMode: 'auto', // 'auto' (wholescan) or 'interactive' (tooltip)
   autoReplaceLimit: 2000, // Max replacements per page to prevent freezing
   theme: 'system', // 'system', 'light', 'dark'
-  disabledDomains: [] // List of domains where extension is disabled
+  disabledDomains: [], // List of domains where extension is disabled
+  disableAnimations: false // Show extension UI changes immediately
 };
+
+function getSiteHostname(locationValue) {
+  const ancestorOrigins = locationValue?.ancestorOrigins;
+  if (ancestorOrigins?.length) {
+    for (let index = ancestorOrigins.length - 1; index >= 0; index--) {
+      try {
+        const hostname = new URL(ancestorOrigins[index]).hostname;
+        if (hostname) return hostname;
+      } catch {
+        // Ignore malformed ancestor origins and continue to the frame URL.
+      }
+    }
+  }
+  return locationValue?.hostname || '';
+}
+
+function shouldLoadPageScannerRates(settings, hostname) {
+  if (!settings?.extensionEnabled || settings.conversionMode !== 'auto') return false;
+  return !settings.disabledDomains?.includes(hostname);
+}
 
 var DOLLAR_TOKENS = new Set([
   '$',

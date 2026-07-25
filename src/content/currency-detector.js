@@ -39,12 +39,22 @@ var CurrencyDetector = (() => {
   }
 
   const keywordPattern = sortedKeywords.map(escapeRegex).join('|');
+  const compactTokenPattern = [
+    ...sortedSymbols,
+    ...ECB_CURRENCIES,
+    ...sortedKeywords,
+  ]
+    .sort((a, b) => b.length - a.length)
+    .map(escapeRegex)
+    .join('|');
 
   // Matches: 1000, 1,000, 1.000, 1,000.50, 1.000,50, 100.5, 100,5, .99, ,99
   const numberPattern = '(?:\\d{1,3}(?:[.,\\s]\\d{3})+(?:[.,]\\d{1,2})?|\\d+(?:[.,]\\d{1,2})?|[.,]\\d{1,2})';
+  const indianNumberPattern = '\\d{1,2}(?:,\\d{2})+,\\d{3}(?:\\.\\d{1,2})?';
+  const swissNumberPattern = "\\d{1,3}(?:['’]\\d{3})+(?:[.,]\\d{1,2})?";
   const signPattern = '[+\\-−]';
-  const leftBoundary = '(?<![A-Za-z0-9_.-])';
-  const rightBoundary = '(?![A-Za-z0-9_.-])';
+  const leftBoundary = `(?<![A-Za-z0-9_.,'’-])`;
+  const rightBoundary = `(?![A-Za-z0-9_.,'’-])`;
 
   const isoCodesSet = new Set(ECB_CURRENCIES);
 
@@ -58,6 +68,39 @@ var CurrencyDetector = (() => {
 
   const isoBeforeRe = new RegExp(`${leftBoundary}([A-Z]{3})\\s*(?:(${signPattern})\\s*)?(${numberPattern})${rightBoundary}`, 'ig');
   const isoAfterRe = new RegExp(`${leftBoundary}(?:(${signPattern})\\s*)?(${numberPattern})\\s*([A-Z]{3})${rightBoundary}`, 'ig');
+  const indianTokenPattern = '(₹|INR|rupees?)';
+  const indianBeforeRe = new RegExp(
+    `${leftBoundary}(?:(${signPattern})\\s*)?${indianTokenPattern}\\s*` +
+    `(?:(${signPattern})\\s*)?(${indianNumberPattern})${rightBoundary}`,
+    'ig',
+  );
+  const indianAfterRe = new RegExp(
+    `${leftBoundary}(?:(${signPattern})\\s*)?(${indianNumberPattern})\\s*` +
+    `${indianTokenPattern}${rightBoundary}`,
+    'ig',
+  );
+  const swissTokenPattern = '(CHF|Fr\\.?|Swiss\\s+francs?|francs?)';
+  const swissBeforeRe = new RegExp(
+    `${leftBoundary}(?:(${signPattern})\\s*)?${swissTokenPattern}\\s*` +
+    `(?:(${signPattern})\\s*)?(${swissNumberPattern})${rightBoundary}`,
+    'ig',
+  );
+  const swissAfterRe = new RegExp(
+    `${leftBoundary}(?:(${signPattern})\\s*)?(${swissNumberPattern})\\s*` +
+    `${swissTokenPattern}${rightBoundary}`,
+    'ig',
+  );
+  const compactSuffixPattern = '(k|m|b|bn|million|billion)';
+  const compactBeforeRe = new RegExp(
+    `${leftBoundary}(?:(${signPattern})\\s*)?(${compactTokenPattern})\\s*` +
+    `(?:(${signPattern})\\s*)?(${numberPattern})\\s*${compactSuffixPattern}${rightBoundary}`,
+    'ig',
+  );
+  const compactAfterRe = new RegExp(
+    `${leftBoundary}(?:(${signPattern})\\s*)?(${numberPattern})\\s*` +
+    `${compactSuffixPattern}\\s*(${compactTokenPattern})${rightBoundary}`,
+    'ig',
+  );
 
   // Symbol regexes with negative lookbehind to prevent matching inside words (e.g., GDDR6)
   // (?<![A-Za-z0-9]) ensures the symbol is not preceded by alphanumeric characters
@@ -131,6 +174,21 @@ var CurrencyDetector = (() => {
     return sign === '-' || sign === '−';
   }
 
+  function parseIndianNumber(numStr) {
+    return parseFloat(numStr.replace(/,/g, ''));
+  }
+
+  function parseSwissNumber(numStr) {
+    return parseFloat(numStr.replace(/['’]/g, '').replace(',', '.'));
+  }
+
+  function compactMetadata(rawSuffix) {
+    const suffix = rawSuffix.toLowerCase();
+    if (suffix === 'k') return { multiplier: 1e3, label: 'K' };
+    if (suffix === 'm' || suffix === 'million') return { multiplier: 1e6, label: 'M' };
+    return { multiplier: 1e9, label: 'B' };
+  }
+
   function isNegativeBySign(signs) {
     return signs.some(isNegativeSign);
   }
@@ -155,9 +213,62 @@ var CurrencyDetector = (() => {
     return null;
   }
 
+  function rangesOverlap(a, b) {
+    return a.start < b.end && b.start < a.end;
+  }
+
+  function getCompatibleQualifiedPair(a, b) {
+    if (!a || !b || !rangesOverlap(a, b)) return null;
+
+    for (const [ambiguous, explicit] of [[a, b], [b, a]]) {
+      if (
+        ambiguous.currencies.length > 1 &&
+        explicit.currencies.length === 1 &&
+        ambiguous.currencies.includes(explicit.currencies[0])
+      ) {
+        return { ambiguous, explicit };
+      }
+    }
+    return null;
+  }
+
+  function combineOverlappingOriginal(a, b) {
+    let left = a;
+    let right = b;
+    if (
+      b.start < a.start ||
+      (b.start === a.start && b.end > a.end)
+    ) {
+      left = b;
+      right = a;
+    }
+
+    if (right.end <= left.end) return left.original;
+    const overlapLength = Math.max(0, left.end - right.start);
+    return left.original + right.original.substring(overlapLength);
+  }
+
+  function mergeQualifiedPair(ambiguous, explicit) {
+    return {
+      ...explicit,
+      amount: ambiguous.amount,
+      original: combineOverlappingOriginal(ambiguous, explicit),
+      start: Math.min(ambiguous.start, explicit.start),
+      end: Math.max(ambiguous.end, explicit.end),
+      negativeStyle: ambiguous.negativeStyle || explicit.negativeStyle,
+      compact: ambiguous.compact || explicit.compact,
+    };
+  }
+
   function pickEarlier(a, b) {
     if (!a) return b;
     if (!b) return a;
+
+    const qualifiedPair = getCompatibleQualifiedPair(a, b);
+    if (qualifiedPair) {
+      return mergeQualifiedPair(qualifiedPair.ambiguous, qualifiedPair.explicit);
+    }
+
     if (b.start < a.start) return b;
     if (b.start > a.start) return a;
     if (b.original.length > a.original.length) return b;
@@ -185,10 +296,39 @@ var CurrencyDetector = (() => {
    * Build a match result object.
    */
   function buildResult(amount, currencies, original, symbol, start, end, signs = []) {
-    // Allow zero-value amounts, but still reject negatives and invalid parses.
-    if (!Number.isFinite(amount) || amount < 0 || currencies.length === 0) return null;
-    if (isNegativeBySign(signs)) return null;
-    return { amount, currencies, original, symbol, start, end };
+    if (!Number.isFinite(amount) || currencies.length === 0) return null;
+    const isNegative = amount < 0 || isNegativeBySign(signs);
+    return {
+      amount: isNegative ? -Math.abs(amount) : amount,
+      currencies,
+      original,
+      symbol,
+      start,
+      end,
+      negativeStyle: isNegative ? 'sign' : null,
+    };
+  }
+
+  function applyAccountingParentheses(result, text) {
+    if (!result) return null;
+
+    let left = result.start - 1;
+    while (left >= 0 && /\s/.test(text[left])) left--;
+    let right = result.end;
+    while (right < text.length && /\s/.test(text[right])) right++;
+
+    if (left >= 0 && text[left] === '(' && right < text.length && text[right] === ')') {
+      return {
+        ...result,
+        amount: -Math.abs(result.amount),
+        original: text.substring(left, right + 1),
+        start: left,
+        end: right + 1,
+        negativeStyle: 'parentheses',
+      };
+    }
+
+    return result;
   }
 
   /**
@@ -232,6 +372,98 @@ var CurrencyDetector = (() => {
       if (!isoCodesSet.has(iso)) return null;
       const amount = parseNumber(match[2], numberFormat);
       return buildResult(amount, [iso], match[0], match[3], start, end, [match[1]]);
+    });
+
+    return pickEarlier(beforeResult, afterResult);
+  }
+
+  function detectByIndianGrouping(text, startIndex) {
+    const beforeResult = scanRegexForResult(indianBeforeRe, text, startIndex, (match, start, end) => {
+      const token = match[2];
+      return buildResult(
+        parseIndianNumber(match[4]),
+        ['INR'],
+        match[0],
+        token,
+        start,
+        end,
+        [match[1], match[3]],
+      );
+    });
+
+    const afterResult = scanRegexForResult(indianAfterRe, text, startIndex, (match, start, end) => {
+      const token = match[3];
+      return buildResult(
+        parseIndianNumber(match[2]),
+        ['INR'],
+        match[0],
+        token,
+        start,
+        end,
+        [match[1]],
+      );
+    });
+
+    return pickEarlier(beforeResult, afterResult);
+  }
+
+  function detectBySwissGrouping(text, startIndex) {
+    const beforeResult = scanRegexForResult(swissBeforeRe, text, startIndex, (match, start, end) => {
+      return buildResult(
+        parseSwissNumber(match[4]),
+        ['CHF'],
+        match[0],
+        match[2],
+        start,
+        end,
+        [match[1], match[3]],
+      );
+    });
+
+    const afterResult = scanRegexForResult(swissAfterRe, text, startIndex, (match, start, end) => {
+      return buildResult(
+        parseSwissNumber(match[2]),
+        ['CHF'],
+        match[0],
+        match[3],
+        start,
+        end,
+        [match[1]],
+      );
+    });
+
+    return pickEarlier(beforeResult, afterResult);
+  }
+
+  function detectByCompactAmount(text, numberFormat, startIndex) {
+    const beforeResult = scanRegexForResult(compactBeforeRe, text, startIndex, (match, start, end) => {
+      const currencies = identifyCurrencies(match[2]);
+      const compact = compactMetadata(match[5]);
+      const result = buildResult(
+        parseNumber(match[4], numberFormat) * compact.multiplier,
+        currencies,
+        match[0],
+        match[2],
+        start,
+        end,
+        [match[1], match[3]],
+      );
+      return result ? { ...result, compact } : null;
+    });
+
+    const afterResult = scanRegexForResult(compactAfterRe, text, startIndex, (match, start, end) => {
+      const currencies = identifyCurrencies(match[4]);
+      const compact = compactMetadata(match[3]);
+      const result = buildResult(
+        parseNumber(match[2], numberFormat) * compact.multiplier,
+        currencies,
+        match[0],
+        match[4],
+        start,
+        end,
+        [match[1]],
+      );
+      return result ? { ...result, compact } : null;
     });
 
     return pickEarlier(beforeResult, afterResult);
@@ -289,8 +521,18 @@ var CurrencyDetector = (() => {
     const keywordResult = detectByKeyword(text, numberFormat, startIndex);
     const isoResult = detectByIsoCode(text, numberFormat, startIndex);
     const symbolResult = detectBySymbol(text, numberFormat, startIndex);
+    const indianResult = detectByIndianGrouping(text, startIndex);
+    const swissResult = detectBySwissGrouping(text, startIndex);
+    const compactResult = detectByCompactAmount(text, numberFormat, startIndex);
 
-    return pickEarlier(pickEarlier(keywordResult, isoResult), symbolResult);
+    const result = pickEarlier(
+      pickEarlier(
+        pickEarlier(pickEarlier(pickEarlier(keywordResult, isoResult), symbolResult), indianResult),
+        swissResult,
+      ),
+      compactResult,
+    );
+    return applyAccountingParentheses(result, text);
   }
 
   return { detectCurrency, parseNumber };
