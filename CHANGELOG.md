@@ -7,6 +7,12 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- Kept converted prices in step with sites that recalculate them after the page has loaded, such as a checkout updating shipping once an address is entered.
+- Fell back to the site's own price whenever a recalculated value can no longer be converted, so a stale converted amount is never left on screen.
+- Cleared the hover label describing the original amount when a site replaces a row we had already converted.
+
 ## [1.3.0] - 2026-07-25
 
 ### Added

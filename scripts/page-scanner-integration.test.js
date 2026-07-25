@@ -25,7 +25,7 @@ try {
     '--disable-gpu',
     '--no-sandbox',
     `--user-data-dir=${profileDir}`,
-    '--virtual-time-budget=2000',
+    '--virtual-time-budget=12000',
     '--dump-dom',
     fixtureUrl,
   ], {
@@ -37,11 +37,6 @@ try {
   const replacements = result.stdout.match(
     /class="[^"]*\bcc-auto-replaced\b[^"]*"/g,
   ) || [];
-  assert.strictEqual(
-    replacements.length,
-    8,
-    'Hybrid mode should replace each price exactly once',
-  );
   assert.match(result.stdout, />6,750 Ft</);
   assert.match(
     result.stdout,
@@ -67,6 +62,49 @@ try {
     result.stdout,
     /class="[^"]*\bcc-auto-replaced\b[^"]*"[^>]*font-size:\s*(?:1[7-9]|[2-9]\d|[1-9]\d{2,})(?:\.\d+)?px/,
     'Layout fallback must never enlarge converted text',
+  );
+
+  // A price the site recalculates after we converted it must not stay frozen
+  // at the old converted value. $10.00 -> 3,273 Ft, $25.00 -> 8,182 Ft.
+  assert.doesNotMatch(
+    result.stdout,
+    /id="recalc-plain"[\s\S]{0,200}?3,273 Ft/,
+    'A recalculated price must not keep showing the old converted value',
+  );
+  assert.match(
+    result.stdout,
+    /id="recalc-plain"[\s\S]{0,200}?8,182 Ft/,
+    'A recalculated price should be converted again from its new value',
+  );
+  assert.match(
+    result.stdout,
+    /id="recalc-composite"[^>]*>8,182 Ft</,
+    'A recalculated composite price should be converted again',
+  );
+  assert.match(
+    result.stdout,
+    /id="recalc-overwrite"[^>]*>8,182 Ft</,
+    'A row the site rewrites in place should be converted again',
+  );
+
+  // When the new value is not a price, the site keeps its own text and no
+  // stale "Original: ..." label may survive.
+  assert.match(
+    result.stdout,
+    /id="recalc-gone"[^>]*>Calculated at next step</,
+    'A value that stops being a price must fall back to the native text',
+  );
+  assert.doesNotMatch(
+    result.stdout,
+    /title="Original: \$10\.00 \(USD\)"/,
+    'No conversion may keep a label describing a value it no longer shows',
+  );
+
+  // Checked last: a count mismatch is a symptom, the assertions above name the cause.
+  assert.strictEqual(
+    replacements.length,
+    11,
+    'Hybrid mode should replace each price exactly once',
   );
 } finally {
   fs.rmSync(profileDir, { recursive: true, force: true });
