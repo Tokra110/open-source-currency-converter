@@ -7,6 +7,12 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.3.3] - 2026-07-25
+
+### Changed
+
+- Replaced the extension toolbar, popup, and packaged store icons with the new currency exchange logo.
+
 ## [1.3.2] - 2026-07-25
 
 ### Fixed
@@ -44,7 +50,8 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Improved currency detection when nearby context disambiguates a symbol or refund amount.
 - Fixed scanning and updates inside connected shadow roots and embedded pages.
 
-[Unreleased]: https://github.com/Tokra110/open-source-currency-converter/compare/v1.3.2...HEAD
+[Unreleased]: https://github.com/Tokra110/open-source-currency-converter/compare/v1.3.3...HEAD
+[1.3.3]: https://github.com/Tokra110/open-source-currency-converter/compare/v1.3.2...v1.3.3
 [1.3.2]: https://github.com/Tokra110/open-source-currency-converter/compare/v1.3.1...v1.3.2
 [1.3.1]: https://github.com/Tokra110/open-source-currency-converter/compare/v1.3.0...v1.3.1
 [1.3.0]: https://github.com/Tokra110/open-source-currency-converter/releases/tag/v1.3.0
