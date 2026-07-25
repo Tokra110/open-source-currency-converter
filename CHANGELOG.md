@@ -7,6 +7,12 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- Stopped converted prices from flickering while a page loads. A site that settles a price through several values now costs one redraw at the end instead of one per value.
+- Made those later redraws silent, so only the first conversion of a price animates.
+- Cleared out an earlier conversion when a text holding two prices is recalculated, instead of leaving it stranded beside the new values.
+
 ## [1.3.1] - 2026-07-25
 
 ### Fixed

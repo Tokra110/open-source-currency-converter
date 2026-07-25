@@ -100,10 +100,36 @@ try {
     'No conversion may keep a label describing a value it no longer shows',
   );
 
+  // A page that settles a price through several values must redraw once, at
+  // the end. Redrawing per write makes prices flicker for the whole load.
+  assert.match(
+    result.stdout,
+    /id="burst-report"[^>]*>renders=1</,
+    'A burst of recalculations should cost the reader a single redraw',
+  );
+  assert.match(
+    result.stdout,
+    /id="recalc-burst"[\s\S]{0,220}?4,909 Ft/,
+    'A settling price should end on the value the site settled on',
+  );
+
+  // Two prices in one text node belong to one conversion. Recalculating must
+  // replace both, never leave the first one stranded beside the new pair.
+  assert.match(
+    result.stdout,
+    /id="recalc-pair"[\s\S]{0,700}?8,182 Ft[\s\S]{0,400}?16,364 Ft[\s\S]{0,40}?shipping<\/p>/,
+    'Both prices in a recalculated text node should be converted afresh',
+  );
+  assert.doesNotMatch(
+    result.stdout,
+    /6,545 Ft/,
+    'A recalculation must not strand the conversion it replaced',
+  );
+
   // Checked last: a count mismatch is a symptom, the assertions above name the cause.
   assert.strictEqual(
     replacements.length,
-    11,
+    14,
     'Hybrid mode should replace each price exactly once',
   );
 } finally {

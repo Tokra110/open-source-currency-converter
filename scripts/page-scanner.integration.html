@@ -56,8 +56,14 @@
       <p class="line-total" id="recalc-gone">$10.00</p>
       <!-- The site rewrites the row we converted, in place. -->
       <p class="price-row" id="recalc-overwrite">$10.00</p>
+      <!-- The site settles this price through several intermediate values. -->
+      <p class="line-total" id="recalc-burst">$10.00</p>
+      <!-- Two prices in one text node, recalculated together. -->
+      <p class="line-total" id="recalc-pair">Total $10.00 and $20.00 shipping</p>
     </article>
   </main>
+
+  <pre id="burst-report"></pre>
 
   <script src="../src/shared/constants.js"></script>
   <script src="../src/content/currency-detector.js"></script>
@@ -69,7 +75,23 @@
       plain: document.getElementById('recalc-plain').firstChild,
       composite: document.getElementById('recalc-composite').firstChild.firstChild,
       gone: document.getElementById('recalc-gone').firstChild,
+      burst: document.getElementById('recalc-burst').firstChild,
+      pair: document.getElementById('recalc-pair').firstChild,
     };
+
+    // How many times the reader would see the burst row change. A page that
+    // settles a price through five values must still only redraw once.
+    const burstEl = document.getElementById('recalc-burst');
+    let burstRenders = 0;
+    let burstLastText = null;
+    let burstCounting = false;
+    new MutationObserver(() => {
+      if (!burstCounting) return;
+      const text = burstEl.textContent;
+      if (text === burstLastText) return;
+      burstLastText = text;
+      burstRenders++;
+    }).observe(burstEl, { childList: true, subtree: true, characterData: true });
 
     PageScanner.init(
       {
@@ -92,6 +114,8 @@
       'recalc-composite',
       'recalc-gone',
       'recalc-overwrite',
+      'recalc-burst',
+      'recalc-pair',
     ];
     const converted = () => recalcIds.every(
       id => document.getElementById(id).textContent.includes('Ft'),
@@ -108,6 +132,18 @@
       retainedNodes.composite.nodeValue = '$25.00';
       retainedNodes.gone.nodeValue = 'Calculated at next step';
       document.getElementById('recalc-overwrite').textContent = '$25.00';
+      retainedNodes.pair.nodeValue = 'Total $25.00 and $50.00 shipping';
+
+      burstLastText = burstEl.textContent;
+      burstCounting = true;
+      ['$11.00', '$12.00', '$13.00', '$14.00', '$15.00'].forEach((value, i) => {
+        setTimeout(() => { retainedNodes.burst.nodeValue = value; }, i * 60);
+      });
+
+      waitFor(() => false, 60, () => {
+        burstCounting = false;
+        document.getElementById('burst-report').textContent = `renders=${burstRenders}`;
+      });
     });
   </script>
 </body>
