@@ -6,6 +6,16 @@
 
 importScripts('../shared/constants.js', 'rates.js');
 
+let resolvedRatesCache = null;
+let rateResolutionPromise = null;
+
+function rememberResolvedRates(rates, timestamp = new Date().toISOString()) {
+  if (rates) {
+    resolvedRatesCache = { rates, timestamp };
+  }
+  return rates;
+}
+
 // --- Installation and alarm setup ---
 
 chrome.runtime.onInstalled.addListener(async () => {
@@ -17,7 +27,7 @@ chrome.runtime.onInstalled.addListener(async () => {
   }
 
   try {
-    await fetchRatesWithRetry();
+    rememberResolvedRates(await fetchRatesWithRetry());
   } catch (err) {
     console.warn('[OpenSourceCurrencyConverter] Failed to fetch initial rates:', err.message);
   }
@@ -31,7 +41,7 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
   if (alarm.name !== ALARM_NAME) return;
 
   try {
-    await fetchRatesWithRetry();
+    rememberResolvedRates(await fetchRatesWithRetry());
   } catch (err) {
     console.warn('[OpenSourceCurrencyConverter] Alarm rate refresh failed, using cached rates:', err.message);
   }
@@ -83,6 +93,7 @@ async function handleManualSync(sendResponse) {
 
     // Get the timestamp we just saved
     const { timestamp } = await getCachedRates();
+    rememberResolvedRates(rates, timestamp);
 
     sendResponse({ status: 'success', timestamp });
   } catch (err) {
@@ -96,26 +107,43 @@ async function handleManualSync(sendResponse) {
  * @returns {Object|null} Rate map or null if completely unavailable
  */
 async function resolveRates() {
+  if (
+    resolvedRatesCache?.rates &&
+    !isRateStale(resolvedRatesCache.timestamp)
+  ) {
+    return resolvedRatesCache.rates;
+  }
+
+  if (rateResolutionPromise) return rateResolutionPromise;
+
+  rateResolutionPromise = resolveRatesUncached()
+    .finally(() => {
+      rateResolutionPromise = null;
+    });
+  return rateResolutionPromise;
+}
+
+async function resolveRatesUncached() {
   const { rates, timestamp } = await getCachedRates();
 
   if (rates && !isRateStale(timestamp)) {
-    return rates;
+    return rememberResolvedRates(rates, timestamp);
   }
 
   if (rates && isRateStale(timestamp)) {
     console.warn('[OpenSourceCurrencyConverter] Cached rates are stale, attempting refresh.');
     try {
-      return await fetchRatesWithRetry();
+      return rememberResolvedRates(await fetchRatesWithRetry());
     } catch (err) {
       console.warn('[OpenSourceCurrencyConverter] Refresh failed, using stale rates:', err.message);
-      return rates;
+      return rememberResolvedRates(rates, timestamp);
     }
   }
 
   // No cached rates at all
   console.warn('[OpenSourceCurrencyConverter] No cached rates, attempting fresh fetch.');
   try {
-    return await fetchRatesWithRetry();
+    return rememberResolvedRates(await fetchRatesWithRetry());
   } catch (err) {
     console.error('[OpenSourceCurrencyConverter] Rate fetch failed:', err.message);
     return null;
@@ -149,6 +177,7 @@ async function handleCurrencyDetected(message, sender) {
         convertedAmount,
         targetCurrency: config.targetCurrency,
         outputFormat: config.outputFormat,
+        disableAnimations: config.disableAnimations,
         negativeStyle: message.detection.negativeStyle,
         compact: message.detection.compact,
       }
@@ -166,6 +195,7 @@ async function handleRecalculation(message, sender) {
     originalSymbol,
     possibleCurrencies,
     outputFormat,
+    disableAnimations,
     negativeStyle,
     compact,
   } = message.data;
@@ -186,6 +216,7 @@ async function handleRecalculation(message, sender) {
         convertedAmount,
         targetCurrency,
         outputFormat,
+        disableAnimations,
         negativeStyle,
         compact,
       }

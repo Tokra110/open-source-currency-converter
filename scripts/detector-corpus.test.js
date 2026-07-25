@@ -51,6 +51,27 @@ function run() {
   d = detector.detectCurrency('CA$10', 'auto', { maxLength: 200 });
   assert(d && d.currencies.length === 1 && d.currencies[0] === 'CAD');
 
+  d = detector.detectCurrency('$33.99 CAD', 'auto', { maxLength: 200 });
+  assert(d && d.amount === 33.99);
+  assert.deepStrictEqual(Array.from(d.currencies), ['CAD']);
+  assert.strictEqual(d.original, '$33.99 CAD');
+
+  d = detector.detectCurrency('¥100 CNY', 'auto', { maxLength: 200 });
+  assert(d && d.amount === 100 && d.currencies[0] === 'CNY');
+  assert.strictEqual(d.original, '¥100 CNY');
+
+  d = detector.detectCurrency('-$33.99 CAD', 'auto', { maxLength: 200 });
+  assert(d && d.amount === -33.99 && d.negativeStyle === 'sign');
+  assert.strictEqual(d.original, '-$33.99 CAD');
+
+  d = detector.detectCurrency('$5 then 10 CAD', 'auto', { maxLength: 200 });
+  assert(d && d.symbol === '$' && d.amount === 5);
+
+  d = detector.detectCurrency('$33.99 EUR', 'auto', { maxLength: 200 });
+  assert(d && d.symbol === '$');
+  assert(d.currencies.includes('USD') && !d.currencies.includes('EUR'));
+  assert.strictEqual(d.original, '$33.99');
+
   // Indian grouping is supported only when the source is explicitly INR.
   for (const sample of ['₹1,23,456.78', 'INR 1,23,456.78', '1,23,456.78 rupees']) {
     d = detector.detectCurrency(sample, 'auto', { maxLength: 200 });

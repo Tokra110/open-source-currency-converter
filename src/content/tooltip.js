@@ -84,6 +84,10 @@ var CurrencyTooltip = (() => {
     return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
   }
 
+  function shouldAnimate(data = state.data) {
+    return !data?.disableAnimations;
+  }
+
   /**
    * Remove active event handlers from the document.
    */
@@ -166,6 +170,7 @@ var CurrencyTooltip = (() => {
             fromCurrency: newCurrency,
             targetCurrency: currentData.targetCurrency,
             outputFormat: currentData.outputFormat,
+            disableAnimations: currentData.disableAnimations,
             negativeStyle: currentData.negativeStyle,
             compact: currentData.compact,
             originalSymbol: currentData.originalSymbol,
@@ -248,6 +253,7 @@ var CurrencyTooltip = (() => {
     }
 
     tooltip.classList.add(`cc-theme-${resolveTheme(theme)}`);
+    tooltip.classList.toggle('cc-no-animations', !shouldAnimate(data));
     tooltip.setAttribute('role', 'tooltip');
     tooltip.setAttribute('aria-label', `Converted: ${state.formattedAmount}`);
 
@@ -306,6 +312,7 @@ var CurrencyTooltip = (() => {
       data.compact,
     );
     state.element.setAttribute('aria-label', `Converted: ${state.formattedAmount}`);
+    state.element.classList.toggle('cc-no-animations', !shouldAnimate(data));
 
     // Update pills
     if (data.possibleCurrencies && data.possibleCurrencies.length > 1) {
@@ -344,6 +351,14 @@ var CurrencyTooltip = (() => {
     const oldValueEl = valueContainer.querySelector('.cc-value:not(.cc-value-exit)');
 
     if (oldValueEl && oldValueEl.textContent === newText) return;
+
+    if (!shouldAnimate(data)) {
+      const immediateValueEl = document.createElement('span');
+      immediateValueEl.className = 'cc-value cc-value-active';
+      immediateValueEl.textContent = newText;
+      valueContainer.replaceChildren(immediateValueEl);
+      return;
+    }
 
     // Immediately remove any elements already in exit state to prevent accumulation
     existingValues.forEach(el => {
@@ -393,5 +408,5 @@ var CurrencyTooltip = (() => {
     return !!state.element;
   }
 
-  return { show, update, remove, isVisible, copyValue };
+  return { show, update, remove, isVisible, copyValue, shouldAnimate };
 })();

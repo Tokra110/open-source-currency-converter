@@ -213,9 +213,62 @@ var CurrencyDetector = (() => {
     return null;
   }
 
+  function rangesOverlap(a, b) {
+    return a.start < b.end && b.start < a.end;
+  }
+
+  function getCompatibleQualifiedPair(a, b) {
+    if (!a || !b || !rangesOverlap(a, b)) return null;
+
+    for (const [ambiguous, explicit] of [[a, b], [b, a]]) {
+      if (
+        ambiguous.currencies.length > 1 &&
+        explicit.currencies.length === 1 &&
+        ambiguous.currencies.includes(explicit.currencies[0])
+      ) {
+        return { ambiguous, explicit };
+      }
+    }
+    return null;
+  }
+
+  function combineOverlappingOriginal(a, b) {
+    let left = a;
+    let right = b;
+    if (
+      b.start < a.start ||
+      (b.start === a.start && b.end > a.end)
+    ) {
+      left = b;
+      right = a;
+    }
+
+    if (right.end <= left.end) return left.original;
+    const overlapLength = Math.max(0, left.end - right.start);
+    return left.original + right.original.substring(overlapLength);
+  }
+
+  function mergeQualifiedPair(ambiguous, explicit) {
+    return {
+      ...explicit,
+      amount: ambiguous.amount,
+      original: combineOverlappingOriginal(ambiguous, explicit),
+      start: Math.min(ambiguous.start, explicit.start),
+      end: Math.max(ambiguous.end, explicit.end),
+      negativeStyle: ambiguous.negativeStyle || explicit.negativeStyle,
+      compact: ambiguous.compact || explicit.compact,
+    };
+  }
+
   function pickEarlier(a, b) {
     if (!a) return b;
     if (!b) return a;
+
+    const qualifiedPair = getCompatibleQualifiedPair(a, b);
+    if (qualifiedPair) {
+      return mergeQualifiedPair(qualifiedPair.ambiguous, qualifiedPair.explicit);
+    }
+
     if (b.start < a.start) return b;
     if (b.start > a.start) return a;
     if (b.original.length > a.original.length) return b;

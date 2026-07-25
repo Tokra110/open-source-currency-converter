@@ -37,6 +37,12 @@
   transform: translate(-50%, 0%) scale(1.02);
 }
 
+#currency-converter-tooltip.cc-no-animations,
+#currency-converter-tooltip.cc-no-animations * {
+  animation: none !important;
+  transition: none !important;
+}
+
 .cc-tooltip-content {
   display: flex;
   flex-direction: column;

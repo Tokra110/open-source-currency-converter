@@ -1,52 +1,90 @@
-# Open Source Currency Converter - Chrome extension
+# Open Source Currency Converter
 
-A Manifest V3 Chrome extension that detects currency amounts in selected text and converts them to your preferred currency via the right-click context menu.
+A privacy-focused Manifest V3 Chrome extension that finds currency amounts on webpages and converts them using daily European Central Bank rates.
 
 ## Features
 
-- Detects currency symbols ($, EUR, GBP, etc.) and ISO codes in selected text
-- **Two Operation Modes**:
-  - **Full Page (Auto)**: Automatically detects and replaces prices on the page (hover to see original)
-  - **Interactive**: Select text and right-click to convert via tooltip
-- Smart context menu that only appears when a currency is detected
-- Sub-menu for ambiguous symbols (e.g. $ could be USD, AUD, CAD)
-- **Disable per site**: Easily disable the extension on specific domains via the popup
-- Daily exchange rates from the European Central Bank (free, no API key)
-- Offline support with cached rates
-- Supports US (1,000.50) and EU (1.000,50) number formats
-- Configurable target currency, theme (light/dark), and more
+- Two conversion modes:
+  - **Hybrid:** Converts prices across the page and also shows selection tooltips.
+  - **Interactive:** Leaves the page unchanged and shows conversions only when you select a price.
+- Detects currency symbols, ISO codes, and currency names.
+- Handles US, European, Indian, and Swiss number grouping.
+- Supports negative amounts, accounting-style refunds, and compact values such as `$2.5M`.
+- Converts prices in embedded frames and open shadow roots.
+- Lets you choose defaults for ambiguous symbols such as `$`, `¥`, and `kr`.
+- Keeps input detection and converted-value display formats separate.
+- Copies converted values from the selection tooltip.
+- Disables the extension on individual sites.
+- Offers an option to disable extension animations.
+- Uses cached ECB rates when the network is unavailable.
+- Contains no analytics, tracking, ads, or remote code.
 
-## Installation (development)
+## Installation for development
 
-1. Clone this repository
-2. Open `chrome://extensions/` in Chrome
-3. Enable "Developer mode" (top right)
-4. Click "Load unpacked" and select this project folder
-5. The extension icon should appear in the toolbar
+1. Clone this repository.
+2. Open `chrome://extensions/` in Chrome.
+3. Enable **Developer mode**.
+4. Select **Load unpacked** and choose this project folder.
+5. Reload the extension from `chrome://extensions/` after changing source files.
+
+There is no build step. Chrome loads the project source directly.
 
 ## Configuration
 
-Click the extension icon to open settings:
-- **Global Toggle**: Quickly enable/disable the extension entirely
-- **Site Toggle**: specific "Disable" button for the current site
-- **Operation Mode**: Switch between "Full Page" (auto-replace) and "Interactive" (manual selection)
-- **Convert to**: Choose your preferred conversion currency
-- **Default '$'**: Set what bare `$` means (USD, AUD, CAD, HKD, NZD, SGD)
-- **Format**: Auto-detect, US, or EU number formats
+Select the extension icon to open the popup.
+
+- **Extension toggle:** Enable or disable the extension everywhere.
+- **On this site:** Enable or disable conversion for the current top-level site and all its frames.
+- **Mode:** Choose Hybrid or Interactive behavior.
+- **Convert to:** Search for and select the target currency.
+- **Currency recognition:** Choose what ambiguous symbols mean.
+- **Number formats:** Configure how source prices are read and converted values are displayed.
+- **Disable animations:** Show page replacements and selection tooltips without motion.
+- **Disabled sites:** Review and re-enable sites from one list.
+- **Sync now:** Refresh ECB rates manually, subject to a one-minute rate limit.
 
 ## How it works
 
-### Interactive Mode
-1. Select any text containing a currency amount on a webpage
-2. Right-click to open the context menu
-3. Click "Convert [amount]" (or pick from sub-menu if ambiguous)
-4. A tooltip appears near the selection with the converted amount
+### Hybrid mode
 
-### Full Page Mode
-1. Browse any webpage with prices
-2. The extension automatically detects and converts prices to your target currency
-3. Hover over the converted price to see the original amount in a tooltip
+The extension scans page text in small idle-time chunks and replaces recognized prices with converted values. Hover over a replacement to see its original amount. Selecting a price also opens the detailed conversion tooltip.
+
+Dynamic page updates, embedded frames, and open shadow roots are scanned as they appear. Editable fields, password and payment forms, scripts, styles, and extension-owned elements are excluded.
+
+### Interactive mode
+
+Select text containing a currency amount. A tooltip appears near the selection with the converted amount. For an ambiguous symbol, the tooltip lets you switch between the possible source currencies. You can also copy the converted value.
 
 ## Rate source
 
-Exchange rates are fetched daily from the [European Central Bank](https://www.ecb.europa.eu/stats/policy_and_exchange_rates/euro_reference_exchange_rates/html/index.en.html). All rates are EUR-based; non-EUR pairs are cross-calculated.
+Exchange rates come from the [European Central Bank](https://www.ecb.europa.eu/stats/policy_and_exchange_rates/euro_reference_exchange_rates/html/index.en.html). ECB rates use EUR as the base, so non-EUR pairs are calculated through EUR.
+
+Rates are cached locally for offline use. User settings are stored with `chrome.storage.sync` and may be synchronized by Chrome when browser sync is enabled.
+
+## Tests
+
+Run the browser-independent regression suite with:
+
+```bash
+for file in scripts/*.test.js; do node "$file"; done
+```
+
+## Packaging
+
+Create the Chrome Web Store archive with:
+
+```bash
+python scripts/pack_extension.py
+```
+
+The output is `open-source-currency-converter.zip`.
+
+## Releases
+
+Notable changes are recorded in [CHANGELOG.md](CHANGELOG.md). Published
+versions and their Chrome Web Store archives are available from
+[GitHub Releases](https://github.com/Tokra110/open-source-currency-converter/releases).
+
+## License
+
+This project is available under the [MIT License](LICENSE).

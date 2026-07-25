@@ -25,6 +25,9 @@ async function run() {
     context,
   );
 
+  assert.strictEqual(context.CurrencyTooltip.shouldAnimate({ disableAnimations: false }), true);
+  assert.strictEqual(context.CurrencyTooltip.shouldAnimate({ disableAnimations: true }), false);
+
   const copied = await context.CurrencyTooltip.copyValue({
     convertedAmount: 1234.5,
     targetCurrency: 'USD',
