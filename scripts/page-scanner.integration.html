@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Page scanner integration fixture</title>
+  <link rel="stylesheet" href="../src/content/page-scanner.css">
+</head>
+<body>
+  <main>
+    <section>
+      <article>
+        <h2>Example item A</h2>
+        <p class="product-price">$10.00 CAD</p>
+        <p class="line-total">$10.00</p>
+      </article>
+      <article>
+        <h2>Example item B</h2>
+        <p class="product-price">$20.00 CAD</p>
+        <p class="line-total">$20.00</p>
+      </article>
+    </section>
+    <aside>
+      <h2>Subtotal</h2>
+      <p class="subtotal-price">$30.00 CAD</p>
+    </aside>
+    <article>
+      <h2>Split price item</h2>
+      <div style="width: 240px">
+        <span
+          id="split-price-container"
+          class="split-price split-price--decimal-super-aligned"
+        ><span aria-hidden="true"><span class="split-price__nowrap"><span
+          class="split-price__currency"
+        >$</span><span class="split-price__integer">40</span></span><span
+          class="split-price__decimal"
+        ><span class="split-price__separator">.</span>99</span></span><span
+          class="split-price__sr-text"
+        >Price $ 40.99</span></span>
+      </div>
+    </article>
+    <article>
+      <h2>Split usage rates</h2>
+      <div id="split-symbol-rate">
+        <span>$</span><span>5</span><span> / MTok</span>
+      </div>
+      <div id="split-code-rate">
+        <span>5</span><span> EUR</span><span> / MTok</span>
+      </div>
+    </article>
+  </main>
+
+  <script src="../src/shared/constants.js"></script>
+  <script src="../src/content/currency-detector.js"></script>
+  <script src="../src/content/page-scanner.js"></script>
+  <script>
+    PageScanner.init(
+      {
+        ...DEFAULT_SETTINGS,
+        targetCurrency: 'HUF',
+        defaultDollarCurrency: 'USD',
+        conversionMode: 'auto',
+        disableAnimations: false,
+      },
+      {
+        EUR: 1,
+        USD: 1.1,
+        CAD: 1.6,
+        HUF: 360,
+      },
+    );
+  </script>
+</body>
+</html>

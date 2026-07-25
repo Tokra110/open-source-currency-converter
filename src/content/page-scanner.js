@@ -33,9 +33,16 @@ var PageScanner = (() => {
     const MAX_SCAN_ITEMS_PER_CHUNK = 150;
     const MIN_SCAN_ITEMS_PER_CHUNK = 20;
     const SCAN_IDLE_TIMEOUT_MS = 250;
+    const ANIMATION_FALLBACK_MS = 500;
     const MUTATION_DEBOUNCE_MS = 100;
     const MUTATION_MAX_WAIT_MS = 500;
     const COMPOSITE_SELECTOR = '[class*="price"], [class*="Price"], [data-price], [itemprop="price"]';
+    const MAX_SPLIT_PRICE_ANCESTORS = 3;
+    const MIN_SPLIT_PRICE_MATCH_RATIO = 0.2;
+    const CURRENCY_FRAGMENT_TOKENS = new Set([
+        ...Object.keys(CURRENCY_SYMBOLS),
+        ...Object.keys(CURRENCY_NAMES),
+    ].map(token => token.toLowerCase()));
     const CONTEXT_AMBIGUOUS_TOKENS = new Set([
         '$', 'dollar', 'dollars', 'buck', 'bucks', 'greenback', 'greenbacks',
         '¥', 'kr', 'fr',
@@ -98,7 +105,19 @@ var PageScanner = (() => {
             callback();
             return;
         }
-        element.addEventListener('animationend', callback, { once: true });
+
+        let completed = false;
+        let fallbackTimer = null;
+        const complete = () => {
+            if (completed) return;
+            completed = true;
+            if (fallbackTimer) clearTimeout(fallbackTimer);
+            element.removeEventListener?.('animationend', complete);
+            callback();
+        };
+
+        element.addEventListener('animationend', complete, { once: true });
+        fallbackTimer = setTimeout(complete, ANIMATION_FALLBACK_MS);
     }
 
     function debugWarn(category, message, data = {}) {
@@ -459,6 +478,9 @@ var PageScanner = (() => {
             root,
             rootPending: true,
             walker,
+            candidates: [],
+            candidateSet: new Set(),
+            phase: 'discover',
         });
         scheduleScanQueue();
     }
@@ -472,7 +494,58 @@ var PageScanner = (() => {
         scheduledScanWork = scheduleIdleWork(processScanQueue);
     }
 
-    function processDiscoveredNode(node) {
+    function queueScanCandidate(traversal, node) {
+        if (!node || traversal.candidateSet.has(node)) return;
+        traversal.candidateSet.add(node);
+        traversal.candidates.push(node);
+    }
+
+    function isCurrencyFragment(text) {
+        return CURRENCY_FRAGMENT_TOKENS.has(text.trim().toLowerCase());
+    }
+
+    function isCompactSplitPriceText(text, detection) {
+        return (
+            !!detection &&
+            text.length <= 50 &&
+            detection.original.length / text.length >= MIN_SPLIT_PRICE_MATCH_RATIO
+        );
+    }
+
+    function findSplitPriceCandidate(textNode) {
+        if (!isCurrencyFragment(textNode.textContent)) return null;
+
+        let bestCandidate = null;
+        let ancestor = textNode.parentElement;
+
+        for (
+            let depth = 0;
+            depth < MAX_SPLIT_PRICE_ANCESTORS && ancestor;
+            depth++
+        ) {
+            const text = ancestor.textContent.trim();
+            if (text.length > 50) break;
+
+            if (ancestor.childElementCount > 0) {
+                const detection = detectCompositeCurrency(text);
+                if (
+                    isCompactSplitPriceText(text, detection) &&
+                    (
+                        !bestCandidate ||
+                        detection.original.length > bestCandidate.detection.original.length
+                    )
+                ) {
+                    bestCandidate = { element: ancestor, detection };
+                }
+            }
+
+            ancestor = ancestor.parentElement || ancestor.getRootNode?.().host || null;
+        }
+
+        return bestCandidate?.element || null;
+    }
+
+    function collectDiscoveredNode(traversal, node) {
         if (
             !isEnabled ||
             replacementCount >= settings.autoReplaceLimit ||
@@ -483,7 +556,8 @@ var PageScanner = (() => {
 
         if (node.nodeType === Node.TEXT_NODE) {
             if (node.textContent.trim() && !shouldSkipNode(node)) {
-                processTextNode(node);
+                queueScanCandidate(traversal, node);
+                queueScanCandidate(traversal, findSplitPriceCandidate(node));
             }
             return;
         }
@@ -491,13 +565,32 @@ var PageScanner = (() => {
         if (node.nodeType !== Node.ELEMENT_NODE) return;
 
         if (node.matches?.(COMPOSITE_SELECTOR)) {
-            processCompositeElement(node);
+            queueScanCandidate(traversal, node);
         }
 
         if (node.shadowRoot) {
             ensureShadowStyles(node.shadowRoot);
             scanNode(node.shadowRoot);
             setupMutationObserver(node.shadowRoot);
+        }
+    }
+
+    function processScanCandidate(node) {
+        if (
+            !isEnabled ||
+            replacementCount >= settings.autoReplaceLimit ||
+            node?.isConnected === false
+        ) {
+            return;
+        }
+
+        if (node.nodeType === Node.TEXT_NODE) {
+            processTextNode(node);
+            return;
+        }
+
+        if (node.nodeType === Node.ELEMENT_NODE) {
+            processCompositeElement(node);
         }
     }
 
@@ -516,15 +609,34 @@ var PageScanner = (() => {
             )
         ) {
             const remainingLimit = MAX_SCAN_ITEMS_PER_CHUNK - processed;
-            const result = drainDomTraversal(
-                scanWork[0],
-                processDiscoveredNode,
-                deadline,
-                remainingLimit,
-            );
-            processed += result.processed;
+            const currentWork = scanWork[0];
 
-            if (result.done) {
+            if (currentWork.phase === 'discover') {
+                const result = drainDomTraversal(
+                    currentWork,
+                    node => collectDiscoveredNode(currentWork, node),
+                    deadline,
+                    remainingLimit,
+                );
+                processed += result.processed;
+
+                if (!result.done) break;
+
+                currentWork.phase = 'process';
+                currentWork.walker = null;
+            }
+
+            const candidatesBefore = currentWork.candidates.length;
+            const candidateLimit = MAX_SCAN_ITEMS_PER_CHUNK - processed;
+            drainScanWork(
+                currentWork.candidates,
+                processScanCandidate,
+                deadline,
+                candidateLimit,
+            );
+            processed += candidatesBefore - currentWork.candidates.length;
+
+            if (currentWork.candidates.length === 0) {
                 scanWork.shift();
                 continue;
             }
@@ -679,18 +791,60 @@ var PageScanner = (() => {
     /**
      * Process an element that might contain a composite price.
      */
-    function processCompositeElement(element) {
-        if (shouldSkipNode(element)) return;
+    function detectCompositeCurrency(text) {
+        if (!text || text.length > 50) return null;
 
-        // Get the combined text content
-        const text = element.textContent.trim();
-        if (!text || text.length > 50) return; // Too long to be just a price
-
-        const detection = CurrencyDetector.detectCurrency(text, settings.numberFormat, {
+        return CurrencyDetector.detectCurrency(text, settings.numberFormat, {
             maxLength: 50,
             startIndex: 0,
         });
-        if (!detection) return;
+    }
+
+    function isFocusedPriceText(text, detection) {
+        return !(
+            text.length > 15 &&
+            detection.original.length < text.length * 0.5
+        );
+    }
+
+    function findCompositeDetection(element) {
+        const text = element.textContent.trim();
+        const detection = detectCompositeCurrency(text);
+        if (detection && isFocusedPriceText(text, detection)) {
+            return { text, detection };
+        }
+
+        // Some storefronts render the visible price in an aria-hidden wrapper
+        // and add a second screen-reader-only copy. Read the rendered wrapper,
+        // but only let its nearest price-like ancestor own the replacement.
+        for (const renderedPrice of element.querySelectorAll('[aria-hidden="true"]')) {
+            const rect = renderedPrice.getBoundingClientRect();
+            if (rect.width <= 0 && rect.height <= 0) continue;
+            if (renderedPrice.closest(COMPOSITE_SELECTOR) !== element) continue;
+
+            const renderedText = renderedPrice.textContent.trim();
+            const renderedDetection = detectCompositeCurrency(renderedText);
+            if (
+                renderedDetection &&
+                isFocusedPriceText(renderedText, renderedDetection)
+            ) {
+                return {
+                    text: renderedText,
+                    detection: renderedDetection,
+                };
+            }
+        }
+
+        return null;
+    }
+
+    function processCompositeElement(element) {
+        if (shouldSkipNode(element)) return;
+
+        const compositeDetection = findCompositeDetection(element);
+        if (!compositeDetection) return;
+
+        const { text, detection } = compositeDetection;
 
         const contextResult = detection.currencies.length > 1
             ? findScopedCurrencyContext(
@@ -706,28 +860,30 @@ var PageScanner = (() => {
 
         if (fromCurrency === settings.targetCurrency) return;
 
-        // Surgical Guard: If the detected match covers a small fraction of the element's text,
-        // it's likely a container row. We'll skip replacing the whole row and let the
-        // scanner find individual price elements inside it.
-        const originalLength = detection.original.length;
-        const totalLength = text.length;
-
-        // If the price is less than 50% of the total text and the text is reasonably long,
-        // it's probably too "noisy" to replace the whole container.
-        if (totalLength > 15 && originalLength < totalLength * 0.5) return;
-
         const convertedAmount = convertCurrencyLocal(detection.amount, fromCurrency, settings.targetCurrency);
         if (convertedAmount === null) return;
 
         // Replace the entire element's content
-        replaceCompositeElement(element, detection, fromCurrency, convertedAmount);
+        replaceCompositeElement(
+            element,
+            text,
+            detection,
+            fromCurrency,
+            convertedAmount,
+        );
         replacementCount++;
     }
 
     /**
      * Replace a composite element's content with converted value.
      */
-    function replaceCompositeElement(element, detection, fromCurrency, convertedAmount) {
+    function replaceCompositeElement(
+        element,
+        compositeText,
+        detection,
+        fromCurrency,
+        convertedAmount,
+    ) {
         const compositeOpId = debugLog('replaceCompositeElement', 'Starting composite replacement', createDebugData(() => ({
             elementInfo: getNodeDebugInfo(element),
             detection: detection.original,
@@ -795,27 +951,30 @@ var PageScanner = (() => {
             element.dataset.fromCurrency = fromCurrency;
             element.title = formatOriginalTitle(fullOriginal, fromCurrency);
 
-            // Standard horizontal layout
-            const newContent = formatReplacement(
+            const replacement = formatReplacement(
                 convertedAmount,
                 settings.targetCurrency,
                 detection.negativeStyle,
                 detection.compact,
             );
+            const newContent = [
+                compositeText.slice(0, detection.start),
+                replacement,
+                compositeText.slice(detection.end),
+            ].join('');
 
-            debugLog('compositeAnimationend', 'About to set innerHTML', createDebugData(() => ({
+            debugLog('compositeAnimationend', 'About to set text content', createDebugData(() => ({
                 compositeOpId,
                 newContent,
                 currentInnerHTML: element.innerHTML?.substring(0, 50),
             })));
 
-            // THIS IS A CRITICAL POINT - modifying innerHTML can conflict with React
             const setContentSuccess = safeDOMOperation(
-                'innerHTML modification',
-                () => { element.innerHTML = newContent; },
+                'textContent modification',
+                () => { element.textContent = newContent; },
                 () => ({
                     element: element,
-                    operation: 'composite-innerHTML-set',
+                    operation: 'composite-textContent-set',
                     newContent,
                     compositeOpId,
                 }),
@@ -1452,6 +1611,8 @@ var PageScanner = (() => {
         // 4. Fallback if layout broke
         if (lineJumped || wrapped || overflows) {
             const ratio = originalRect.width / newRect.width;
+            if (ratio >= 1) return;
+
             const computedStyle = window.getComputedStyle(element);
             const currentFontSize = parseFloat(computedStyle.fontSize) || 14;
 
