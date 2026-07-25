@@ -3,7 +3,7 @@ const assert = require('assert');
 const fs = require('fs');
 const vm = require('vm');
 
-const context = { console, Intl, WeakMap, URL };
+const context = { console, Intl, WeakMap, URL, setTimeout, clearTimeout };
 const pageScannerSource = fs.readFileSync('src/content/page-scanner.js', 'utf8');
 vm.createContext(context);
 vm.runInContext(
