@@ -1,0 +1,404 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Currency Detection Testbed</title>
+  <style>
+    :root {
+      --bg: #f4f5f7;
+      --card: #ffffff;
+      --ink: #1f2937;
+      --muted: #6b7280;
+      --line: #d1d5db;
+      --accent: #0f766e;
+      --warn: #b45309;
+    }
+
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+      background: linear-gradient(180deg, #f8fafc 0%, #eef2ff 100%);
+      color: var(--ink);
+      line-height: 1.4;
+    }
+
+    header, main {
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 20px 16px;
+    }
+
+    h1, h2 {
+      margin: 0 0 12px 0;
+      letter-spacing: 0.2px;
+    }
+
+    h1 { font-size: 28px; }
+    h2 { font-size: 20px; margin-top: 18px; }
+
+    .note {
+      margin: 12px 0;
+      padding: 12px 14px;
+      border-left: 4px solid var(--accent);
+      background: #ecfeff;
+      border-radius: 8px;
+    }
+
+    .warn {
+      border-left-color: var(--warn);
+      background: #fffbeb;
+    }
+
+    .grid {
+      display: grid;
+      gap: 14px;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    }
+
+    .card {
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 14px;
+      box-shadow: 0 6px 18px rgba(17, 24, 39, 0.06);
+    }
+
+    .card p {
+      margin: 4px 0;
+    }
+
+    .code {
+      display: inline-block;
+      font-family: Consolas, "Courier New", monospace;
+      background: #f3f4f6;
+      border: 1px solid #e5e7eb;
+      border-radius: 6px;
+      padding: 1px 6px;
+      font-size: 13px;
+    }
+
+    .controls {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin: 8px 0 4px 0;
+    }
+
+    button {
+      border: 1px solid #0f766e;
+      background: #14b8a6;
+      color: white;
+      border-radius: 8px;
+      padding: 8px 12px;
+      cursor: pointer;
+      font-weight: 600;
+    }
+
+    button.secondary {
+      background: #e5e7eb;
+      border-color: #9ca3af;
+      color: #111827;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      overflow: hidden;
+      font-size: 14px;
+    }
+
+    th, td {
+      text-align: left;
+      vertical-align: top;
+      border-bottom: 1px solid #e5e7eb;
+      padding: 8px 10px;
+    }
+
+    thead th {
+      background: #f9fafb;
+      font-size: 13px;
+      letter-spacing: 0.2px;
+      color: #111827;
+      position: sticky;
+      top: 0;
+    }
+
+    tbody tr:hover { background: #f8fafc; }
+
+    .price {
+      margin: 6px 0;
+      padding: 6px 8px;
+      border: 1px dashed #9ca3af;
+      border-radius: 8px;
+      background: #f8fafc;
+      display: inline-block;
+    }
+
+    .muted {
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    #dynamic-feed .card {
+      border-style: dashed;
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Currency Detection Testbed</h1>
+    <p class="muted">Purpose: stress-test detection across DOM layouts, symbol/code formats, and edge cases.</p>
+    <div class="note">
+      Run via HTTP to trigger your extension content scripts:
+      <span class="code">python -m http.server 8080</span> then open
+      <span class="code">http://localhost:8080/docs/currency-detection-testbed.html</span>.
+    </div>
+    <div class="note warn">
+      This page intentionally includes cases that should fail or behave oddly (for regression testing).
+    </div>
+  </header>
+
+  <main>
+    <section class="card">
+      <h2>Controls</h2>
+      <div class="controls">
+        <button id="btn-add-dynamic">Add Dynamic Batch</button>
+        <button id="btn-start-stream">Start Dynamic Stream</button>
+        <button id="btn-stop-stream" class="secondary">Stop Stream</button>
+        <button id="btn-clear-dynamic" class="secondary">Clear Dynamic</button>
+      </div>
+      <p class="muted">
+        Use these to validate MutationObserver paths and post-load DOM replacements.
+      </p>
+    </section>
+
+    <section>
+      <h2>All Supported Currencies (Generated)</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>ISO</th>
+            <th>Name</th>
+            <th>Symbol</th>
+            <th>ISO Before</th>
+            <th>ISO After</th>
+            <th>Symbol Before</th>
+            <th>Symbol After</th>
+          </tr>
+        </thead>
+        <tbody id="all-currency-rows"></tbody>
+      </table>
+    </section>
+
+    <section>
+      <h2>Symbol Ambiguity and Alternatives</h2>
+      <div class="grid">
+        <div class="card">
+          <h3>Ambiguous</h3>
+          <p class="price">$89.99</p>
+          <p class="price">89.99 $</p>
+          <p class="price">¥1000</p>
+          <p class="price">1000 kr</p>
+          <p class="muted">Use this for default-dollar preference and symbol ambiguity checks.</p>
+        </div>
+        <div class="card">
+          <h3>Alternative Dollar Notations</h3>
+          <p class="price">A$19.95</p>
+          <p class="price">C$19.95</p>
+          <p class="price">NZ$19.95</p>
+          <p class="price">S$19.95</p>
+          <p class="price">HK$19.95</p>
+          <p class="price">US$19.95</p>
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <h2>DOM Structure Patterns</h2>
+      <div class="grid">
+        <div class="card">
+          <h3>Single Text Nodes</h3>
+          <p class="price">Subtotal: 34,016 Ft</p>
+          <p class="price">Pro-rata credit: -59,890 Ft</p>
+          <p class="price">Total due today: €0</p>
+          <p class="price">Bundle: $5 and $7 in one node</p>
+        </div>
+
+        <div class="card price">
+          <h3>Split Across Spans (No small/big tags)</h3>
+          <span>€</span><span>12</span><span>.34</span>
+        </div>
+
+        <div class="card price">
+          <h3>Nested Wrappers</h3>
+          <span><span>USD</span> <strong>1,234</strong><em>.56</em></span>
+        </div>
+
+        <div class="card" data-price="199.95">
+          <h3>data-price Attribute Candidate</h3>
+          <div class="price"><span>$</span><span>199</span><span>.95</span></div>
+        </div>
+
+        <div class="card" itemprop="price">
+          <h3>itemprop=price Candidate</h3>
+          <div><span>Ft</span> <span>2.500,00</span></div>
+        </div>
+
+        <div class="card">
+          <h3>Long Container (Should Often Be Skipped)</h3>
+          <p class="price">
+            Plan details include services, tax, credits, previous balance, and total amount due of €12.34 for this month.
+          </p>
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <h2>Formatting and Whitespace Edge Cases</h2>
+      <div class="grid">
+        <div class="card">
+          <p class="price">USD 10</p>
+          <p class="price">USD   10</p>
+          <p class="price">10 USD</p>
+          <p class="price">10   USD</p>
+        </div>
+        <div class="card">
+          <p class="price">1 234 Ft</p>
+          <p class="price">1  234 Ft</p>
+          <p class="price">1	234 Ft</p>
+          <p class="price">1
+234 Ft</p>
+        </div>
+        <div class="card">
+          <p class="price">.99 €</p>
+          <p class="price">Price: .99 €</p>
+          <p class="price">1'234.56 CHF</p>
+          <p class="price">v1.0USD</p>
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <h2>Intentional False-Positive Traps</h2>
+      <div class="grid">
+        <div class="card">
+          <p class="price">Drive R2D2 model</p>
+          <p class="price">Version R 2.0 release</p>
+          <p class="price">SKU-100USD-XL</p>
+          <p class="price">abc100USD</p>
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <h2>Dynamic Feed (MutationObserver)</h2>
+      <div id="dynamic-feed" class="grid"></div>
+    </section>
+  </main>
+
+  <script src="../src/shared/constants.js"></script>
+  <script>
+    (() => {
+      const amountByCode = {
+        HUF: '34,016',
+        JPY: '1299',
+        KRW: '55000',
+        IDR: '150000',
+        ISK: '9200',
+      };
+
+      const dynamicCodes = Object.keys(CURRENCY_NAMES);
+      let dynamicIndex = 0;
+      let streamTimer = null;
+
+      function amountFor(code) {
+        return amountByCode[code] || '1,234.56';
+      }
+
+      function renderAllCurrencies() {
+        const tbody = document.getElementById('all-currency-rows');
+        const codes = Object.keys(CURRENCY_NAMES).sort();
+        const rows = [];
+
+        for (const code of codes) {
+          const name = CURRENCY_NAMES[code] || '';
+          const symbol = CURRENCY_CODE_TO_SYMBOL[code] || '';
+          const amount = amountFor(code);
+          const symbolBefore = symbol ? `${symbol}${amount}` : '(n/a)';
+          const symbolAfter = symbol ? `${amount} ${symbol}` : '(n/a)';
+
+          rows.push(
+            `<tr>
+              <td><span class="code">${code}</span></td>
+              <td>${name}</td>
+              <td>${symbol || '(none)'}</td>
+              <td>${code} ${amount}</td>
+              <td>${amount} ${code}</td>
+              <td>${symbolBefore}</td>
+              <td>${symbolAfter}</td>
+            </tr>`
+          );
+        }
+
+        tbody.innerHTML = rows.join('');
+      }
+
+      function createDynamicCard() {
+        const code = dynamicCodes[dynamicIndex % dynamicCodes.length];
+        const symbol = CURRENCY_CODE_TO_SYMBOL[code] || code;
+        const amount = amountFor(code);
+        dynamicIndex += 1;
+
+        const wrapper = document.createElement('div');
+        wrapper.className = 'card';
+        wrapper.innerHTML = `
+          <h3>Dynamic ${code}</h3>
+          <p class="price">${code} ${amount}</p>
+          <p class="price">${amount} ${code}</p>
+          <p class="price">${symbol}${amount}</p>
+          <p class="price">${amount} ${symbol}</p>
+        `;
+        return wrapper;
+      }
+
+      function addDynamicBatch(count = 6) {
+        const feed = document.getElementById('dynamic-feed');
+        const fragment = document.createDocumentFragment();
+        for (let i = 0; i < count; i++) {
+          fragment.appendChild(createDynamicCard());
+        }
+        feed.appendChild(fragment);
+      }
+
+      function startStream() {
+        if (streamTimer) return;
+        streamTimer = setInterval(() => addDynamicBatch(2), 1500);
+      }
+
+      function stopStream() {
+        if (!streamTimer) return;
+        clearInterval(streamTimer);
+        streamTimer = null;
+      }
+
+      function clearDynamic() {
+        stopStream();
+        document.getElementById('dynamic-feed').innerHTML = '';
+      }
+
+      document.getElementById('btn-add-dynamic').addEventListener('click', () => addDynamicBatch(8));
+      document.getElementById('btn-start-stream').addEventListener('click', startStream);
+      document.getElementById('btn-stop-stream').addEventListener('click', stopStream);
+      document.getElementById('btn-clear-dynamic').addEventListener('click', clearDynamic);
+
+      renderAllCurrencies();
+      addDynamicBatch(4);
+    })();
+  </script>
+</body>
+</html>
