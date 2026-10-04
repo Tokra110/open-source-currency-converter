@@ -1,6 +1,6 @@
 # Open source currency converter manual
 
-How the extension is built and why: modes, file layout, tests, release and gotchas. The brief is `AGENTS.md`; the release history is `CHANGELOG.md`; the user-facing description is `README.md`.
+How the extension is built and why: modes, file layout, tests, release and gotchas. The brief is `AGENTS.md`; the release history is `CHANGELOG.md`; the dated log is `session-notes.md`; the user-facing description is `README.md`.
 
 ## Modes
 
