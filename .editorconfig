@@ -1,0 +1,9 @@
+root = true
+
+# Unix line endings everywhere, so no editor on any machine brings Windows ones back.
+[*]
+end_of_line = lf
+
+# Windows scripts keep Windows line endings.
+[*.{bat,cmd,ps1}]
+end_of_line = crlf
