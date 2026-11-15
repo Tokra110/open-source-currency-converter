@@ -31,7 +31,7 @@ for (const [iconPath, expectedSize] of Object.entries({
 }
 
 assert.ok(license.startsWith('MIT License\n'));
-assert.ok(license.includes('Copyright (c) 2026 Dávid Takács-Tolnai'));
+assert.ok(license.includes('Copyright (c) 2026 Tokra110'));
 assert.ok(license.includes('Permission is hereby granted, free of charge'));
 assert.ok(!license.includes('GNU GENERAL PUBLIC LICENSE'));
 
